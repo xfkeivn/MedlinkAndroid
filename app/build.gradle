@@ -148,4 +148,8 @@ dependencies {
 
     implementation 'com.google.android.exoplayer:exoplayer-core:2.18.5'
     implementation project(':libausbc')
+
+    // Kotlin Coroutines
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3'
 }
