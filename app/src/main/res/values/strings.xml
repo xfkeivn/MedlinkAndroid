@@ -20,4 +20,8 @@
     <string name="department">科室</string>
     <string name="location">位置/区域</string>
     <string name="description">描述信息</string>
+    <string name="equipment">设备类型</string>
+    <string name="equipment_hint">请选择设备类型</string>
+    <string name="hospital_hint">请选择医院</string>
+    <string name="department_hint">请选择科室</string>
 </resources>
