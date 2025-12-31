@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="equipment_types">
+        <item>CRM Programmer 3300</item>
+        <item>CRM Programmer 3120</item>
+        <item>Polaris</item>
+        <item>Avvigo</item>
+        <item>iLab</item>
+        <item>Others</item>
+    </string-array>
+</resources>
+
