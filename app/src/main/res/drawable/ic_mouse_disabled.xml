@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 鼠标图标（灰色） -->
+    <path
+        android:fillColor="#9E9E9E"
+        android:pathData="M13,1.07V9h7c0,-4.08 -3.05,-7.44 -7,-7.93zM4,15c0,4.42 3.58,8 8,8s8,-3.58 8,-8v-4H4v4zM11,1.07C6.05,1.56 3,4.92 3,9h7V1.07z"/>
+    <!-- 禁用斜线（红色，使用填充路径绘制粗线） -->
+    <path
+        android:fillColor="#FF0000"
+        android:pathData="M2,2 L4,2 L22,20 L20,22 Z M20,2 L22,2 L4,20 L2,20 Z"/>
+</vector>
