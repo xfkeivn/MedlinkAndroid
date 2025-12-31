@@ -17,6 +17,7 @@ import androidx.core.content.ContextCompat
 import com.bsci.medlink.MainApplication
 import com.bsci.medlink.R
 import com.bsci.medlink.databinding.ActivityVideoCallBinding
+import com.bsci.medlink.utils.AgoraManager
 import com.bsci.medlink.utils.CommonUtil
 import com.bsci.medlink.utils.PermissonUtils
 import com.bsci.medlink.utils.SerialPortManager
@@ -53,6 +54,11 @@ class VideoCallActivity : CameraActivity() {
     private var joined = false
     private var channelId: String = ""
     private var remoteUid: Int = 0 // 远程用户ID
+    
+    // 获取 AgoraManager 实例
+    private val agoraManager: AgoraManager by lazy {
+        (application as MainApplication).agoraManager
+    }
     
     // USB 串口管理器
     private var serialPortManager: SerialPortManager? = null
@@ -185,37 +191,10 @@ class VideoCallActivity : CameraActivity() {
     }
 
     private fun initAgoraEngine() {
-        try {
-            val config = RtcEngineConfig()
-            config.mContext = applicationContext
-            config.mAppId = getString(R.string.agora_app_id)
-            config.mChannelProfile = Constants.CHANNEL_PROFILE_LIVE_BROADCASTING
-            config.mEventHandler = iRtcEngineEventHandler
-            config.mAudioScenario = Constants.AudioScenario.getValue(Constants.AudioScenario.DEFAULT)
-            (application as? MainApplication)?.globalSettings?.areaCode?.let {
-                config.mAreaCode = it
-            }
-            engine = RtcEngine.create(config)
-            
-            engine?.setParameters(
-                "{" +
-                    "\"rtc.report_app_scenario\":" +
-                    "{" +
-                    "\"appScenario\":" + 100 + "," +
-                    "\"serviceType\":" + 11 + "," +
-                    "\"appVersion\":\"" + RtcEngine.getSdkVersion() + "\"" +
-                    "}" +
-                    "}"
-            )
-            
-            val localAccessPointConfiguration =
-                (application as? MainApplication)?.globalSettings?.privateCloudConfig
-            if (localAccessPointConfiguration != null) {
-                engine?.setLocalAccessPoint(localAccessPointConfiguration)
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            showAlert("初始化 Agora 引擎失败: ${e.message}")
+        // 使用 AgoraManager 获取或创建 RtcEngine 实例
+        engine = agoraManager.getOrCreateEngine(iRtcEngineEventHandler)
+        if (engine == null) {
+            showAlert("初始化 Agora 引擎失败")
         }
     }
 
@@ -642,10 +621,9 @@ class VideoCallActivity : CameraActivity() {
         serialPortManager = null
         engine?.leaveChannel()
         engine?.stopPreview()
+        // 注意：不在这里释放 engine，因为可能被 MeetingPrepareActivity 使用
+        // 只在应用退出时由 MainApplication 统一释放
         engine = null
-        handler.post {
-            RtcEngine.destroy()
-        }
         handler.removeCallbacksAndMessages(null)
         super.onDestroy()
     }

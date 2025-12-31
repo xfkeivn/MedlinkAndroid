@@ -17,6 +17,7 @@ import com.bsci.medlink.data.remote.HostRegistrationService
 import com.bsci.medlink.databinding.ActivityMeetingPrepareBinding
 import com.bsci.medlink.ui.adapter.ClientListAdapter
 import com.bsci.medlink.ui.videocall.VideoCallActivity
+import com.bsci.medlink.utils.AgoraManager
 import com.bsci.medlink.utils.DeviceUuidFactory
 import com.bsci.medlink.utils.SerialPortManager
 import com.bsci.medlink.utils.HIDCommandBuilder
@@ -49,6 +50,11 @@ class MeetingPrepareActivity : AppCompatActivity() {
     private var agoraEngine: RtcEngine? = null
     private var isAgoraJoined = false
     private val onlineUserIds = mutableSetOf<String>() // 存储在线用户的ID
+    
+    // 获取 AgoraManager 实例
+    private val agoraManager: AgoraManager by lazy {
+        (application as MainApplication).agoraManager
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -526,40 +532,12 @@ class MeetingPrepareActivity : AppCompatActivity() {
      * 初始化 Agora Engine（仅用于监听频道用户变化，不发布音视频）
      */
     private fun initAgoraEngineForPresence() {
-        try {
-            val config = RtcEngineConfig()
-            config.mContext = applicationContext
-            config.mAppId = getString(R.string.agora_app_id)
-            config.mChannelProfile = Constants.CHANNEL_PROFILE_LIVE_BROADCASTING
-            config.mEventHandler = agoraPresenceEventHandler
-            config.mAudioScenario = Constants.AudioScenario.getValue(Constants.AudioScenario.DEFAULT)
-            
-            (application as? MainApplication)?.globalSettings?.areaCode?.let {
-                config.mAreaCode = it
-            }
-            
-            agoraEngine = RtcEngine.create(config)
-            
-            agoraEngine?.setParameters(
-                "{" +
-                    "\"rtc.report_app_scenario\":" +
-                    "{" +
-                    "\"appScenario\":" + 100 + "," +
-                    "\"serviceType\":" + 11 + "," +
-                    "\"appVersion\":\"" + RtcEngine.getSdkVersion() + "\"" +
-                    "}" +
-                    "}"
-            )
-            
-            val localAccessPointConfiguration =
-                (application as? MainApplication)?.globalSettings?.privateCloudConfig
-            if (localAccessPointConfiguration != null) {
-                agoraEngine?.setLocalAccessPoint(localAccessPointConfiguration)
-            }
-            
+        // 使用 AgoraManager 获取或创建 RtcEngine 实例
+        agoraEngine = agoraManager.getOrCreateEngine(agoraPresenceEventHandler)
+        if (agoraEngine != null) {
             Log.d(TAG, "Agora Engine initialized for presence monitoring")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize Agora engine for presence", e)
+        } else {
+            Log.e(TAG, "Failed to initialize Agora engine for presence")
         }
     }
     
@@ -657,6 +635,17 @@ class MeetingPrepareActivity : AppCompatActivity() {
         override fun onLeaveChannel(stats: io.agora.rtc2.IRtcEngineEventHandler.RtcStats) {
             Log.d(TAG, "Left channel for presence")
             isAgoraJoined = false
+            // 离开频道后，如果 Activity 处于 resume 状态，重新加入频道
+            // 这样可以确保从 VideoCallActivity 返回后能重新监听用户状态
+            val channelId = preferenceManager.getChannelId()
+            if (channelId.isNotEmpty() && agoraEngine != null) {
+                // 延迟一小段时间后重新加入，确保离开操作完成
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    if (!isAgoraJoined) {
+                        joinAgoraChannelForPresence()
+                    }
+                }, 300)
+            }
         }
         
         override fun onUserJoined(uid: Int, elapsed: Int) {
@@ -707,15 +696,21 @@ class MeetingPrepareActivity : AppCompatActivity() {
     
     override fun onResume() {
         super.onResume()
-        // 当 Activity 恢复时，如果不在监听频道中，重新加入监听频道
-        if (!isAgoraJoined && agoraEngine != null) {
-            val channelId = preferenceManager.getChannelId()
-            if (channelId.isNotEmpty()) {
+        // 当 Activity 恢复时，重新加入监听频道（确保状态是最新的）
+        // 因为 VideoCallActivity 退出时会 leaveChannel，所以需要重新加入
+        val channelId = preferenceManager.getChannelId()
+        if (channelId.isNotEmpty() && agoraEngine != null) {
+            // 如果已经在频道中，先离开再重新加入（确保状态刷新）
+            if (isAgoraJoined) {
+                agoraEngine?.leaveChannel()
+                // 注意：isAgoraJoined 会在 onLeaveChannel 回调中设置为 false
+                // 清空在线用户列表，等待重新加入后更新
+                onlineUserIds.clear()
+                // 在 onLeaveChannel 回调中会重新加入频道
+            } else {
+                // 如果不在频道中，直接加入
                 joinAgoraChannelForPresence()
             }
-        } else if (isAgoraJoined) {
-            // 如果已经在频道中，刷新客户端列表状态（确保状态正确）
-            refreshClientsListStatus()
         }
     }
     
@@ -751,6 +746,8 @@ class MeetingPrepareActivity : AppCompatActivity() {
             isAgoraJoined = false
         }
         agoraEngine?.stopPreview()
+        // 注意：不在这里释放 engine，因为可能被 VideoCallActivity 使用
+        // 只在应用退出时由 MainApplication 统一释放
         agoraEngine = null
         
         // 释放串口资源
