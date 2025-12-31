@@ -163,8 +163,7 @@ class VideoCallActivity : CameraActivity() {
 
         // 结束会议
         binding.btnEndCall.setOnClickListener {
-            leaveChannel()
-            finish()
+            showExitCallDialog()
         }
 
         // 远程控制使能切换
@@ -239,35 +238,7 @@ class VideoCallActivity : CameraActivity() {
             showAlert("需要摄像头和麦克风权限才能进行视频通话")
         }
     }
-
-    private fun checkCameraPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            when {
-                ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.CAMERA
-                ) == PackageManager.PERMISSION_GRANTED -> {
-                    Log.d(TAG, "CAMERA permission already granted")
-                }
-                else -> {
-                    Log.d(TAG, "Requesting CAMERA permission")
-                    requestPermissionLauncher.launch(Manifest.permission.CAMERA)
-                }
-            }
-        }
-    }
-
-    private val requestPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted: Boolean ->
-        if (isGranted) {
-            Log.d(TAG, "CAMERA permission granted")
-        } else {
-            Log.e(TAG, "CAMERA permission denied")
-            showToast("需要摄像头权限才能显示 USB 摄像头")
-        }
-    }
-
+    
     private fun joinChannel() {
         engine?.setDefaultAudioRoutetoSpeakerphone(true)
         engine?.setClientRole(Constants.CLIENT_ROLE_BROADCASTER)
@@ -297,20 +268,85 @@ class VideoCallActivity : CameraActivity() {
         // 设置麦克风状态
         engine?.muteLocalAudioStream(isMicrophoneMuted)
         
-
-            val option = ChannelMediaOptions()
-            option.autoSubscribeAudio = true
-            option.autoSubscribeVideo = true
-            option.publishCustomVideoTrack = true
-            val res = engine?.joinChannel(null, channelId, 0, option) ?: -1
-            if (res != 0) {
-                handler.post {
-                    showAlert(RtcEngine.getErrorDescription(Math.abs(res)))
-                }
-
+        val option = ChannelMediaOptions()
+        option.autoSubscribeAudio = true
+        option.autoSubscribeVideo = true
+        option.publishCustomVideoTrack = true
+        option.publishMicrophoneTrack = !isMicrophoneMuted
+        option.clientRoleType = Constants.CLIENT_ROLE_BROADCASTER
+        
+        val res = engine?.joinChannel(null, channelId, 0, option) ?: -1
+        if (res != 0) {
+            handler.post {
+                showAlert(RtcEngine.getErrorDescription(Math.abs(res)))
             }
         }
+    }
 
+    private fun checkCameraPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            when {
+                ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.CAMERA
+                ) == PackageManager.PERMISSION_GRANTED -> {
+                    Log.d(TAG, "CAMERA permission already granted")
+                }
+                else -> {
+                    Log.d(TAG, "Requesting CAMERA permission")
+                    requestPermissionLauncher.launch(Manifest.permission.CAMERA)
+                }
+            }
+        }
+    }
+
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            Log.d(TAG, "CAMERA permission granted")
+        } else {
+            Log.e(TAG, "CAMERA permission denied")
+            showToast("需要摄像头权限才能显示 USB 摄像头")
+        }
+    }
+
+
+
+    /**
+     * 显示退出会议确认对话框
+     */
+    private fun showExitCallDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("退出会议")
+            .setMessage("确定要退出会议吗？")
+            .setPositiveButton("确定") { _, _ ->
+                exitCall()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+    
+    /**
+     * 退出会议（离开频道并返回）
+     */
+    private fun exitCall() {
+        // 移除预览数据回调
+        removePreviewDataCallBack(previewDataCallback)
+        joined = false
+        
+        // 离开频道
+        engine?.leaveChannel()
+        engine?.stopPreview()
+        
+        // 返回 MeetingPrepareActivity
+        finish()
+    }
+    
+    override fun onBackPressed() {
+        // 拦截返回键，提示用户是否退出会议
+        showExitCallDialog()
+    }
 
     private fun leaveChannel() {
         if (!joined) return
@@ -435,13 +471,9 @@ class VideoCallActivity : CameraActivity() {
         override fun onJoinChannelSuccess(channel: String?, uid: Int, elapsed: Int) {
             Log.i(TAG, String.format("onJoinChannelSuccess channel %s uid %d", channel, uid))
             myUid = uid
-            joined = true
+            // joined 状态已在 configureVideoCall 中设置
             handler.post {
                 showToast("加入频道成功")
-                // Add preview data callback after joining channel successfully
-                // If camera is already opened, the callback will be added
-                // Otherwise, it will be added in onCameraState when camera opens
-                addPreviewDataCallBack(previewDataCallback)
             }
         }
 

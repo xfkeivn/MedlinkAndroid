@@ -115,6 +115,10 @@ class SplashActivity : AppCompatActivity() {
                         accountResponse.hostInfo.createTime?.let {
                             preferenceManager.saveRegisterDate(it)
                         }
+                        // 保存会议号
+                        accountResponse.hostInfo.channelId?.let {
+                            preferenceManager.saveChannelId(it)
+                        }
                     }
                     
                     // 缓存客户端列表到 Application

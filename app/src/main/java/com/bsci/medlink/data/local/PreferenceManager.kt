@@ -24,6 +24,7 @@ class PreferenceManager(context: Context) {
         private const val KEY_LOCATION = "location"
         private const val KEY_EQUIPMENT = "equipment"
         private const val KEY_REGISTER_DATE = "register_date"
+        private const val KEY_CHANNEL_ID = "channel_id"
     }
 
     fun saveLoginInfo(username: String, password: String, rememberMe: Boolean) {
@@ -150,6 +151,17 @@ class PreferenceManager(context: Context) {
     
     fun getRegisterDate(): String {
         return prefs.getString(KEY_REGISTER_DATE, "") ?: ""
+    }
+    
+    fun saveChannelId(channelId: String?) {
+        prefs.edit().apply {
+            channelId?.let { putString(KEY_CHANNEL_ID, it) } ?: remove(KEY_CHANNEL_ID)
+            apply()
+        }
+    }
+    
+    fun getChannelId(): String {
+        return prefs.getString(KEY_CHANNEL_ID, "") ?: ""
     }
 }
 

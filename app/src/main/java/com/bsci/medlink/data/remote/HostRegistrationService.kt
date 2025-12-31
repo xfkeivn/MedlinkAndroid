@@ -126,11 +126,20 @@ class HostRegistrationService {
                     // 已注册
                     val hostInfo = if (doc.has("HostInfo") && doc.get("HostInfo") is JSONObject) {
                         val hostObj = doc.getJSONObject("HostInfo")
+                        val hospital = extractNameFromField(hostObj, "hospital")
+                        val department = extractNameFromField(hostObj, "department")
+                        val equipment = extractEquipmentName(hostObj)
+                        
+                        // 获取channel_id（会议号）
+                        val channelId = extractChannelId(hostObj)
+                        
                         HostInfo(
                             uuid = hostObj.optString("uuid", ""),
-                            hospital = hostObj.optString("hospital", null),
-                            department = hostObj.optString("department", null),
-                            location = hostObj.optString("location", null)
+                            hospital = hospital,
+                            department = department,
+                            location = hostObj.optString("location", null),
+                            equipment = equipment,
+                            channelId = channelId
                         )
                     } else {
                         null
@@ -185,11 +194,20 @@ class HostRegistrationService {
                 if (result) {
                     val hostInfo = if (doc.has("HostInfo") && doc.get("HostInfo") is JSONObject) {
                         val hostObj = doc.getJSONObject("HostInfo")
+                        val hospital = extractNameFromField(hostObj, "hospital")
+                        val department = extractNameFromField(hostObj, "department")
+                        val equipment = extractEquipmentName(hostObj)
+                        
+                        // 获取channel_id（会议号）
+                        val channelId = extractChannelId(hostObj)
+                        
                         HostInfo(
                             uuid = uuid,
-                            hospital = hostObj.optString("hospital", null),
-                            department = hostObj.optString("department", null),
-                            location = hostObj.optString("location", null)
+                            hospital = hospital,
+                            department = department,
+                            location = hostObj.optString("location", null),
+                            equipment = equipment,
+                            channelId = channelId
                         )
                     } else {
                         HostInfo(uuid = uuid)
@@ -314,14 +332,22 @@ class HostRegistrationService {
                             isEnabled = hostObj.getBoolean("isEnable")
                         }
                         
-                        // 获取医院、科室等信息
+                        // 获取医院、科室等信息（支持对象和字符串格式）
+                        val hospital = extractNameFromField(hostObj, "hospital")
+                        val department = extractNameFromField(hostObj, "department")
+                        val equipment = extractEquipmentName(hostObj)
+                        
+                        // 获取channel_id（会议号）
+                        val channelId = extractChannelId(hostObj)
+                        
                         hostInfo = HostInfo(
                             uuid = uuid,
-                            hospital = hostObj.optString("hospital", null),
-                            department = hostObj.optString("department", null),
+                            hospital = hospital,
+                            department = department,
                             location = hostObj.optString("location", null),
-                            equipment = hostObj.optString("equipment", null),
-                            createTime = hostObj.optString("create_time", null)
+                            equipment = equipment,
+                            createTime = hostObj.optString("create_time", null),
+                            channelId = channelId
                         )
                         
                         // 如果设备不可用，尝试获取错误信息
@@ -370,6 +396,95 @@ class HostRegistrationService {
                 message = "解析响应失败: ${e.message}"
             )
         }
+    }
+    
+    /**
+     * 从字段中提取名称（支持对象和字符串格式）
+     * 如果是对象，优先返回中文名称，如果没有则返回英文名称
+     * 如果是字符串，直接返回
+     */
+    private fun extractNameFromField(obj: JSONObject, fieldName: String): String? {
+        if (!obj.has(fieldName)) {
+            return null
+        }
+        
+        val fieldValue = obj.get(fieldName)
+        
+        return when {
+            fieldValue is String -> {
+                // 如果是字符串，直接返回
+                if (fieldValue.isNotEmpty()) fieldValue else null
+            }
+            fieldValue is JSONObject -> {
+                // 如果是对象，提取中文或英文名称
+                val chineseName = fieldValue.optString("chinese_name", "")
+                val englishName = fieldValue.optString("english_name", "")
+                
+                when {
+                    chineseName.isNotEmpty() -> chineseName
+                    englishName.isNotEmpty() -> englishName
+                    else -> null
+                }
+            }
+            else -> null
+        }
+    }
+    
+    /**
+     * 从设备字段中提取名称（支持对象和字符串格式）
+     */
+    private fun extractEquipmentName(obj: JSONObject): String? {
+        if (!obj.has("equipment")) {
+            return null
+        }
+        
+        val equipmentValue = obj.get("equipment")
+        
+        return when {
+            equipmentValue is String -> {
+                // 如果是字符串，直接返回
+                if (equipmentValue.isNotEmpty()) equipmentValue else null
+            }
+            equipmentValue is JSONObject -> {
+                // 如果是对象，提取name字段
+                val name = equipmentValue.optString("name", "")
+                if (name.isNotEmpty()) name else null
+            }
+            else -> null
+        }
+    }
+    
+    /**
+     * 从channel字段中提取channel_id（会议号）
+     * 支持两种格式：
+     * 1. "channel": {"id": 45, "channel_id": "1044"} (对象格式)
+     * 2. "channel_id": "1044" (直接字段格式)
+     */
+    private fun extractChannelId(obj: JSONObject): String? {
+        // 优先检查 channel 对象
+        if (obj.has("channel")) {
+            val channelValue = obj.get("channel")
+            return when {
+                channelValue is JSONObject -> {
+                    // 如果是对象，提取 channel_id 字段
+                    val channelId = channelValue.optString("channel_id", "")
+                    if (channelId.isNotEmpty()) channelId else null
+                }
+                channelValue is String -> {
+                    // 如果是字符串，直接返回
+                    if (channelValue.isNotEmpty()) channelValue else null
+                }
+                else -> null
+            }
+        }
+        
+        // 如果没有 channel 对象，检查是否有直接的 channel_id 字段
+        if (obj.has("channel_id")) {
+            val channelId = obj.optString("channel_id", "")
+            return if (channelId.isNotEmpty()) channelId else null
+        }
+        
+        return null
     }
     
     /**

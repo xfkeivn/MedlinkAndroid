@@ -7,6 +7,26 @@
     android:padding="16dp"
     android:background="@color/white">
 
+    <!-- 顶部工具栏：退出按钮 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="end"
+        android:layout_marginBottom="16dp">
+        
+        <Button
+            android:id="@+id/btn_exit"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="退出程序"
+            android:textSize="14sp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp" />
+    </LinearLayout>
+
     <!-- 设备信息区域（客户端列表上方） -->
     <LinearLayout
         android:layout_width="match_parent"
@@ -29,183 +49,199 @@
             android:drawablePadding="8dp"
             android:gravity="center_vertical" />
         
-        <!-- 设备ID -->
+        <!-- 使用LinearLayout实现2列网格布局 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="12dp">
+            android:orientation="vertical">
             
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_device"
-                android:contentDescription="设备ID"
-                android:layout_marginEnd="12dp"
-                android:tint="@color/purple_500" />
-            
-            <TextView
-                android:layout_width="wrap_content"
+            <!-- 第一行：设备ID | 医院 -->
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="设备ID："
-                android:textSize="15sp"
-                android:textColor="@color/black"
-                android:textStyle="bold" />
+                android:orientation="horizontal"
+                android:layout_marginBottom="12dp">
+                
+                <!-- 设备ID -->
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingEnd="8dp">
+                    
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_device"
+                        android:contentDescription="设备ID"
+                        android:layout_marginEnd="8dp"
+                        android:tint="@color/purple_500" />
+                    
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+                        
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="会议号"
+                        android:textSize="12sp"
+                        android:textColor="@color/offline_gray" />
+                        
+                        <TextView
+                            android:id="@+id/tv_device_id"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="未设置"
+                            android:textSize="15sp"
+                            android:textColor="@color/black"
+                            android:textStyle="bold"
+                            android:ellipsize="end"
+                            android:maxLines="1" />
+                    </LinearLayout>
+                </LinearLayout>
+                
+                <!-- 医院 -->
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingStart="8dp">
+                    
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_hospital"
+                        android:contentDescription="医院"
+                        android:layout_marginEnd="8dp"
+                        android:tint="@color/purple_500" />
+                    
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+                        
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="医院"
+                            android:textSize="12sp"
+                            android:textColor="@color/offline_gray" />
+                        
+                        <TextView
+                            android:id="@+id/tv_hospital_value"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="未设置"
+                            android:textSize="15sp"
+                            android:textColor="@color/black"
+                            android:textStyle="bold"
+                            android:ellipsize="end"
+                            android:maxLines="1" />
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
             
-            <TextView
-                android:id="@+id/tv_device_id"
-                android:layout_width="0dp"
+            <!-- 第二行：科室 | 设备 -->
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="未设置"
-                android:textSize="15sp"
-                android:textColor="@color/black"
-                android:ellipsize="end"
-                android:maxLines="1" />
-        </LinearLayout>
-        
-        <!-- 医院 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="12dp">
-            
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_hospital"
-                android:contentDescription="医院"
-                android:layout_marginEnd="12dp"
-                android:tint="@color/purple_500" />
-            
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="医院："
-                android:textSize="15sp"
-                android:textColor="@color/black"
-                android:textStyle="bold" />
-            
-            <TextView
-                android:id="@+id/tv_hospital_value"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="未设置"
-                android:textSize="15sp"
-                android:textColor="@color/black"
-                android:ellipsize="end"
-                android:maxLines="1" />
-        </LinearLayout>
-        
-        <!-- 科室 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="12dp">
-            
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_department"
-                android:contentDescription="科室"
-                android:layout_marginEnd="12dp"
-                android:tint="@color/purple_500" />
-            
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="科室："
-                android:textSize="15sp"
-                android:textColor="@color/black"
-                android:textStyle="bold" />
-            
-            <TextView
-                android:id="@+id/tv_department_value"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="未设置"
-                android:textSize="15sp"
-                android:textColor="@color/black"
-                android:ellipsize="end"
-                android:maxLines="1" />
-        </LinearLayout>
-        
-        <!-- 设备 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="12dp">
-            
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_equipment"
-                android:contentDescription="设备"
-                android:layout_marginEnd="12dp"
-                android:tint="@color/purple_500" />
-            
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="设备："
-                android:textSize="15sp"
-                android:textColor="@color/black"
-                android:textStyle="bold" />
-            
-            <TextView
-                android:id="@+id/tv_equipment_value"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="未设置"
-                android:textSize="15sp"
-                android:textColor="@color/black"
-                android:ellipsize="end"
-                android:maxLines="1" />
-        </LinearLayout>
-        
-        <!-- 注册日期 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
-            
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_calendar"
-                android:contentDescription="注册日期"
-                android:layout_marginEnd="12dp"
-                android:tint="@color/purple_500" />
-            
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="注册日期："
-                android:textSize="15sp"
-                android:textColor="@color/black"
-                android:textStyle="bold" />
-            
-            <TextView
-                android:id="@+id/tv_register_date_value"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="未设置"
-                android:textSize="15sp"
-                android:textColor="@color/black"
-                android:ellipsize="end"
-                android:maxLines="1" />
+                android:orientation="horizontal"
+                android:layout_marginBottom="12dp">
+                
+                <!-- 科室 -->
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingEnd="8dp">
+                    
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_department"
+                        android:contentDescription="科室"
+                        android:layout_marginEnd="8dp"
+                        android:tint="@color/purple_500" />
+                    
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+                        
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="科室"
+                            android:textSize="12sp"
+                            android:textColor="@color/offline_gray" />
+                        
+                        <TextView
+                            android:id="@+id/tv_department_value"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="未设置"
+                            android:textSize="15sp"
+                            android:textColor="@color/black"
+                            android:textStyle="bold"
+                            android:ellipsize="end"
+                            android:maxLines="1" />
+                    </LinearLayout>
+                </LinearLayout>
+                
+                <!-- 设备 -->
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingStart="8dp">
+                    
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_equipment"
+                        android:contentDescription="设备"
+                        android:layout_marginEnd="8dp"
+                        android:tint="@color/purple_500" />
+                    
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+                        
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="设备"
+                            android:textSize="12sp"
+                            android:textColor="@color/offline_gray" />
+                        
+                        <TextView
+                            android:id="@+id/tv_equipment_value"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="未设置"
+                            android:textSize="15sp"
+                            android:textColor="@color/black"
+                            android:textStyle="bold"
+                            android:ellipsize="end"
+                            android:maxLines="1" />
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 
@@ -270,7 +306,7 @@
             android:id="@+id/iv_remote_control"
             android:layout_width="48dp"
             android:layout_height="48dp"
-            android:src="@drawable/ic_remote_control_off"
+            android:src="@drawable/ic_mouse_disabled"
             android:contentDescription="远程控制"
             android:layout_marginStart="16dp" />
 

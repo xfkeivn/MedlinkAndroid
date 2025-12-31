@@ -19,10 +19,17 @@ import com.bsci.medlink.ui.adapter.ClientListAdapter
 import com.bsci.medlink.ui.videocall.VideoCallActivity
 import com.bsci.medlink.utils.DeviceUuidFactory
 import com.bsci.medlink.utils.SerialPortManager
+import com.bsci.medlink.utils.HIDCommandBuilder
+import io.agora.rtc2.ChannelMediaOptions
+import io.agora.rtc2.Constants
+import io.agora.rtc2.IRtcEngineEventHandler
+import io.agora.rtc2.RtcEngine
+import io.agora.rtc2.RtcEngineConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 
 class MeetingPrepareActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMeetingPrepareBinding
@@ -37,6 +44,11 @@ class MeetingPrepareActivity : AppCompatActivity() {
     private var isRemoteControlEnabled = false
     private var serialPortManager: SerialPortManager? = null
     private var isSerialPortAvailable = false
+    
+    // Agora RTC Engine（仅用于监听频道用户变化）
+    private var agoraEngine: RtcEngine? = null
+    private var isAgoraJoined = false
+    private val onlineUserIds = mutableSetOf<String>() // 存储在线用户的ID
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -46,6 +58,9 @@ class MeetingPrepareActivity : AppCompatActivity() {
         preferenceManager = PreferenceManager(this)
         uuidFactory = DeviceUuidFactory(this)
 
+        // 初始化 Agora Engine 用于监听频道用户变化
+        initAgoraEngineForPresence()
+        
         // 检查设备是否可用（后台开关控制）
         checkDeviceEnabled()
     }
@@ -92,6 +107,51 @@ class MeetingPrepareActivity : AppCompatActivity() {
         setupClientList()
         initSerialPort()
         setupDeviceStatus()
+        setupExitButton()
+    }
+    
+    /**
+     * 设置退出按钮
+     */
+    private fun setupExitButton() {
+        binding.btnExit.setOnClickListener {
+            showExitAppDialog()
+        }
+    }
+    
+    /**
+     * 显示退出程序确认对话框
+     */
+    private fun showExitAppDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("退出程序")
+            .setMessage("确定要退出程序吗？")
+            .setPositiveButton("确定") { _, _ ->
+                exitApp()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+    
+    /**
+     * 退出程序
+     */
+    private fun exitApp() {
+        // 离开频道
+        if (isAgoraJoined) {
+            agoraEngine?.leaveChannel()
+            isAgoraJoined = false
+        }
+        
+        // 释放资源
+        agoraEngine?.stopPreview()
+        agoraEngine = null
+        serialPortManager?.release()
+        serialPortManager = null
+        
+        // 退出应用
+        finishAffinity()
+        android.os.Process.killProcess(android.os.Process.myPid())
     }
 
     private fun showDeviceDisabledDialog(message: String) {
@@ -117,19 +177,18 @@ class MeetingPrepareActivity : AppCompatActivity() {
     }
 
     private fun setupDeviceInfo() {
-        val deviceUuid = uuidFactory.getDeviceUuid()
+        val channelId = preferenceManager.getChannelId()
         val hospital = preferenceManager.getHospital()
         val department = preferenceManager.getDepartment()
         val equipment = preferenceManager.getEquipment()
-        val registerDate = preferenceManager.getRegisterDate()
 
         // 在客户端列表上方显示详细信息
-        setupDeviceInfoPanel(deviceUuid, hospital, department, equipment, registerDate)
+        setupDeviceInfoPanel(channelId, hospital, department, equipment)
     }
     
-    private fun setupDeviceInfoPanel(deviceUuid: String, hospital: String, department: String, equipment: String, registerDate: String) {
-        // 显示设备ID
-        binding.tvDeviceId.text = if (deviceUuid.isNotEmpty()) deviceUuid else "未设置"
+    private fun setupDeviceInfoPanel(channelId: String, hospital: String, department: String, equipment: String) {
+        // 显示会议号
+        binding.tvDeviceId.text = if (channelId.isNotEmpty()) channelId else "未设置"
         
         // 显示医院
         binding.tvHospitalValue.text = if (hospital.isNotEmpty()) hospital else "未设置"
@@ -139,30 +198,6 @@ class MeetingPrepareActivity : AppCompatActivity() {
         
         // 显示设备
         binding.tvEquipmentValue.text = if (equipment.isNotEmpty()) equipment else "未设置"
-        
-        // 显示注册日期
-        val formattedDate = if (registerDate.isNotEmpty()) {
-            formatRegisterDate(registerDate)
-        } else {
-            "未设置"
-        }
-        binding.tvRegisterDateValue.text = formattedDate
-    }
-    
-    private fun formatRegisterDate(dateString: String): String {
-        return try {
-            // 解析 ISO 8601 格式：2025-12-30T09:57:14.705702
-            // 转换为：2025-12-30 09:57:14
-            if (dateString.contains("T")) {
-                val datePart = dateString.substringBefore("T")
-                val timePart = dateString.substringAfter("T").substringBefore(".")
-                "$datePart $timePart"
-            } else {
-                dateString
-            }
-        } catch (e: Exception) {
-            dateString
-        }
     }
 
     private fun setupClientList() {
@@ -189,8 +224,10 @@ class MeetingPrepareActivity : AppCompatActivity() {
         // 从 Application 缓存中获取客户端列表
         val cachedClients = (application as? MainApplication)?.cachedClients
         if (cachedClients != null && cachedClients.isNotEmpty()) {
+            // 更新在线状态并排序（在线在前）
+            val sortedClients = updateClientsOnlineStatus(cachedClients)
             // 使用缓存的数据更新适配器
-            clientAdapter = ClientListAdapter(cachedClients) { client ->
+            clientAdapter = ClientListAdapter(sortedClients) { client ->
                 selectedClient = client
                 updateCallButtonState()
             }
@@ -201,7 +238,7 @@ class MeetingPrepareActivity : AppCompatActivity() {
     private fun loadClientsFromServer() {
         // TODO: 从 PreferenceManager 或配置中获取 IP 和 UUID
         // 这里需要根据实际情况获取 IP 地址和 UUID
-        val ip = getServerIp() // 需要实现此方法获取 IP
+         val ip = getServerIp() // 需要实现此方法获取 IP
         val uuid = getUuid() // 需要实现此方法获取 UUID
 
         if (ip.isEmpty() || uuid.isEmpty()) {
@@ -221,12 +258,16 @@ class MeetingPrepareActivity : AppCompatActivity() {
                         // 更新缓存
                         (application as? MainApplication)?.cachedClients = clients
                         
-                        // 更新适配器数据
-                        clientAdapter = ClientListAdapter(clients) { client ->
+                        // 更新适配器数据（使用在线状态更新后的客户端列表）
+                        val clientsWithStatus = updateClientsOnlineStatus(clients)
+                        clientAdapter = ClientListAdapter(clientsWithStatus) { client ->
                             selectedClient = client
                             updateCallButtonState()
                         }
                         binding.rvClients.adapter = clientAdapter
+                        
+                        // 加入 Agora 频道以监听用户变化
+                        joinAgoraChannelForPresence()
                     } else {
                         // 如果服务器返回空列表，但缓存中有数据，保持显示缓存数据
                         if ((application as? MainApplication)?.cachedClients.isNullOrEmpty()) {
@@ -305,20 +346,20 @@ class MeetingPrepareActivity : AppCompatActivity() {
             }
             isRemoteControlEnabled = !isRemoteControlEnabled
             updateRemoteControlIcon()
-            Toast.makeText(this, if (isRemoteControlEnabled) "远程控制已启用" else "远程控制已禁用", Toast.LENGTH_SHORT).show()
+            
+            if (isRemoteControlEnabled) {
+                Toast.makeText(this, "远程控制已启用", Toast.LENGTH_SHORT).show()
+                // 执行从左到右的鼠标移动测试
+                performMouseMoveTest()
+            } else {
+                Toast.makeText(this, "远程控制已禁用", Toast.LENGTH_SHORT).show()
+            }
         }
 
         // 通话按钮
         binding.btnCall.setOnClickListener {
             if (selectedClient != null && selectedClient!!.isOnline) {
-                val intent = Intent(this, VideoCallActivity::class.java).apply {
-                    putExtra("client_id", selectedClient!!.id)
-                    putExtra("client_name", selectedClient!!.name)
-                    putExtra("channel_id", "channel_${selectedClient!!.id}") // 使用客户端ID作为频道ID
-                    putExtra("microphone_enabled", isMicrophoneEnabled)
-                    putExtra("remote_control_enabled", isRemoteControlEnabled)
-                }
-                startActivity(intent)
+                startVideoCall()
             } else {
                 Toast.makeText(this, "请选择一个在线的客户端", Toast.LENGTH_SHORT).show()
             }
@@ -349,17 +390,17 @@ class MeetingPrepareActivity : AppCompatActivity() {
 
     private fun updateRemoteControlIcon() {
         if (!isSerialPortAvailable) {
-            // 串口设备不可用，显示灰色
-            binding.ivRemoteControl.setImageResource(R.drawable.ic_remote_control_off)
+            // 串口设备不可用，显示灰色禁用鼠标图标
+            binding.ivRemoteControl.setImageResource(R.drawable.ic_mouse_disabled)
             binding.ivRemoteControl.alpha = 0.3f
         } else if (isRemoteControlEnabled) {
-            // 串口设备可用且已启用
-            binding.ivRemoteControl.setImageResource(R.drawable.ic_remote_control_on)
+            // 串口设备可用且已启用，显示正常鼠标图标
+            binding.ivRemoteControl.setImageResource(R.drawable.ic_mouse)
             binding.ivRemoteControl.alpha = 1.0f
         } else {
-            // 串口设备可用但未启用
-            binding.ivRemoteControl.setImageResource(R.drawable.ic_remote_control_off)
-            binding.ivRemoteControl.alpha = 0.7f
+            // 串口设备可用但未启用，显示禁用鼠标图标（带斜线）
+            binding.ivRemoteControl.setImageResource(R.drawable.ic_mouse_disabled)
+            binding.ivRemoteControl.alpha = 1.0f
         }
     }
 
@@ -417,8 +458,302 @@ class MeetingPrepareActivity : AppCompatActivity() {
         }
     }
     
+    /**
+     * 执行鼠标从左到右移动测试
+     * 使用协程实现平滑移动
+     */
+    private fun performMouseMoveTest() {
+        if (!isSerialPortAvailable || serialPortManager == null) {
+            Log.w("MeetingPrepareActivity", "Serial port not available for mouse move test")
+            return
+        }
+        
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                // 目标窗口尺寸（可以根据实际设备调整）
+                val targetWidth = 1920
+                val targetHeight = 1080
+                
+                // 移动参数
+                val startX = 0
+                val endX = targetWidth
+                val y = targetHeight / 2  // 屏幕中间
+                val steps = 50  // 移动步数
+                val stepDelay = 20L  // 每步延迟（毫秒）
+                
+                Log.d("MeetingPrepareActivity", "Starting mouse move test: from ($startX, $y) to ($endX, $y) in $steps steps")
+                
+                for (i in 0..steps) {
+                    // 计算当前位置
+                    val currentX = startX + ((endX - startX) * i / steps)
+                    
+                    // 生成绝对鼠标移动指令
+                    val command = HIDCommandBuilder.buildMouseAbsoluteCommand(
+                        x = currentX,
+                        y = y,
+                        targetWidth = targetWidth,
+                        targetHeight = targetHeight,
+                        buttonStatus = HIDCommandBuilder.MouseButton.NONE
+                    )
+                    
+                    // 发送指令
+                    val success = serialPortManager?.sendData(command) ?: false
+                    if (success) {
+                        Log.d("MeetingPrepareActivity", "Mouse moved to ($currentX, $y)")
+                    } else {
+                        Log.w("MeetingPrepareActivity", "Failed to send mouse move command to ($currentX, $y)")
+                    }
+                    
+                    // 延迟，实现平滑移动
+                    delay(stepDelay)
+                }
+                
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@MeetingPrepareActivity, "鼠标移动测试完成", Toast.LENGTH_SHORT).show()
+                }
+                
+                Log.d("MeetingPrepareActivity", "Mouse move test completed")
+            } catch (e: Exception) {
+                Log.e("MeetingPrepareActivity", "Error during mouse move test", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@MeetingPrepareActivity, "鼠标移动测试失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+    
+    /**
+     * 初始化 Agora Engine（仅用于监听频道用户变化，不发布音视频）
+     */
+    private fun initAgoraEngineForPresence() {
+        try {
+            val config = RtcEngineConfig()
+            config.mContext = applicationContext
+            config.mAppId = getString(R.string.agora_app_id)
+            config.mChannelProfile = Constants.CHANNEL_PROFILE_LIVE_BROADCASTING
+            config.mEventHandler = agoraPresenceEventHandler
+            config.mAudioScenario = Constants.AudioScenario.getValue(Constants.AudioScenario.DEFAULT)
+            
+            (application as? MainApplication)?.globalSettings?.areaCode?.let {
+                config.mAreaCode = it
+            }
+            
+            agoraEngine = RtcEngine.create(config)
+            
+            agoraEngine?.setParameters(
+                "{" +
+                    "\"rtc.report_app_scenario\":" +
+                    "{" +
+                    "\"appScenario\":" + 100 + "," +
+                    "\"serviceType\":" + 11 + "," +
+                    "\"appVersion\":\"" + RtcEngine.getSdkVersion() + "\"" +
+                    "}" +
+                    "}"
+            )
+            
+            val localAccessPointConfiguration =
+                (application as? MainApplication)?.globalSettings?.privateCloudConfig
+            if (localAccessPointConfiguration != null) {
+                agoraEngine?.setLocalAccessPoint(localAccessPointConfiguration)
+            }
+            
+            Log.d(TAG, "Agora Engine initialized for presence monitoring")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize Agora engine for presence", e)
+        }
+    }
+    
+    /**
+     * 启动视频通话（直接启动 VideoCallActivity，由 VideoCallActivity 负责加入频道）
+     */
+    private fun startVideoCall() {
+        val client = selectedClient ?: return
+        val channelId = preferenceManager.getChannelId() // 使用设备的频道ID
+        
+        if (channelId.isEmpty()) {
+            Toast.makeText(this, "频道ID未设置，无法开始通话", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        // 直接启动 VideoCallActivity，由 VideoCallActivity 负责加入频道
+        val intent = Intent(this, VideoCallActivity::class.java).apply {
+            putExtra("client_id", client.id)
+            putExtra("client_name", client.name)
+            putExtra("channel_id", channelId) // 使用设备的频道ID
+            putExtra("microphone_enabled", isMicrophoneEnabled)
+            putExtra("remote_control_enabled", isRemoteControlEnabled)
+        }
+        startActivity(intent)
+    }
+    
+    /**
+     * 加入 Agora 频道作为观察者（用于监听用户变化）
+     */
+    private fun joinAgoraChannelForPresence() {
+        if (isAgoraJoined || agoraEngine == null) {
+            return
+        }
+        
+        val channelId = preferenceManager.getChannelId()
+        if (channelId.isEmpty()) {
+            Log.w(TAG, "Channel ID is empty, cannot join channel for presence")
+            return
+        }
+        
+        try {
+            // 作为观察者加入频道（不发布音视频）
+            val option = ChannelMediaOptions().apply {
+                autoSubscribeAudio = false
+                autoSubscribeVideo = false
+                publishCustomVideoTrack = false
+                publishMicrophoneTrack = false
+                clientRoleType = Constants.CLIENT_ROLE_AUDIENCE
+            }
+            
+            val result = agoraEngine?.joinChannel(null, channelId, 0, option) ?: -1
+            if (result == 0) {
+                Log.d(TAG, "Joined channel $channelId for presence monitoring")
+            } else {
+                Log.e(TAG, "Failed to join channel for presence: $result")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error joining channel for presence", e)
+        }
+    }
+    
+    
+    
+    /**
+     * 更新客户端在线状态（基于 Agora 频道内的用户）
+     * 返回的列表已排序：在线客户端在前，离线客户端在后
+     */
+    private fun updateClientsOnlineStatus(clients: List<Client>): List<Client> {
+        return clients.map { client ->
+            val isOnline = onlineUserIds.contains(client.id) || 
+                          onlineUserIds.contains(client.id.toIntOrNull()?.toString())
+            client.copy(isOnline = isOnline)
+        }.sortedByDescending { it.isOnline } // 在线状态为 true 的排在前面
+    }
+    
+    /**
+     * Agora 事件处理器（用于监听频道用户变化）
+     */
+    private val agoraPresenceEventHandler = object : IRtcEngineEventHandler() {
+        override fun onError(err: Int) {
+            Log.w(TAG, "Agora presence engine error: $err")
+        }
+        
+        override fun onJoinChannelSuccess(channel: String?, uid: Int, elapsed: Int) {
+            Log.d(TAG, "Joined channel for presence: $channel, uid: $uid")
+            isAgoraJoined = true
+            // 加入频道成功后，刷新客户端列表状态
+            // 注意：已经在频道中的用户会通过 onUserJoined 回调通知
+            // 但为了确保状态正确，延迟一小段时间后刷新
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                refreshClientsListStatus()
+            }, 500)
+        }
+        
+        override fun onLeaveChannel(stats: io.agora.rtc2.IRtcEngineEventHandler.RtcStats) {
+            Log.d(TAG, "Left channel for presence")
+            isAgoraJoined = false
+        }
+        
+        override fun onUserJoined(uid: Int, elapsed: Int) {
+            Log.d(TAG, "User joined channel: uid=$uid")
+            onlineUserIds.add(uid.toString())
+            // 更新客户端列表状态
+            updateClientsListStatus()
+        }
+        
+        override fun onUserOffline(uid: Int, reason: Int) {
+            Log.d(TAG, "User offline: uid=$uid, reason=$reason")
+            onlineUserIds.remove(uid.toString())
+            // 更新客户端列表状态
+            updateClientsListStatus()
+        }
+    }
+    
+    /**
+     * 更新客户端列表的在线状态
+     */
+    private fun updateClientsListStatus() {
+        val cachedClients = (application as? MainApplication)?.cachedClients
+        if (cachedClients != null) {
+            val updatedClients = updateClientsOnlineStatus(cachedClients)
+            // 更新缓存
+            (application as? MainApplication)?.cachedClients = updatedClients
+            
+            // 更新适配器
+            runOnUiThread {
+                if (::clientAdapter.isInitialized) {
+                    clientAdapter = ClientListAdapter(updatedClients) { client ->
+                        selectedClient = client
+                        updateCallButtonState()
+                    }
+                    binding.rvClients.adapter = clientAdapter
+                }
+            }
+        }
+    }
+    
+    companion object {
+        private const val TAG = "MeetingPrepareActivity"
+    }
+
+    override fun onPause() {
+        super.onPause()
+    }
+    
+    override fun onResume() {
+        super.onResume()
+        // 当 Activity 恢复时，如果不在监听频道中，重新加入监听频道
+        if (!isAgoraJoined && agoraEngine != null) {
+            val channelId = preferenceManager.getChannelId()
+            if (channelId.isNotEmpty()) {
+                joinAgoraChannelForPresence()
+            }
+        } else if (isAgoraJoined) {
+            // 如果已经在频道中，刷新客户端列表状态（确保状态正确）
+            refreshClientsListStatus()
+        }
+    }
+    
+    /**
+     * 刷新客户端列表状态（重新从缓存获取并更新在线状态）
+     */
+    private fun refreshClientsListStatus() {
+        val cachedClients = (application as? MainApplication)?.cachedClients
+        if (cachedClients != null) {
+            val updatedClients = updateClientsOnlineStatus(cachedClients)
+            // 更新缓存
+            (application as? MainApplication)?.cachedClients = updatedClients
+            
+            // 更新适配器
+            runOnUiThread {
+                if (::clientAdapter.isInitialized) {
+                    clientAdapter = ClientListAdapter(updatedClients) { client ->
+                        selectedClient = client
+                        updateCallButtonState()
+                    }
+                    binding.rvClients.adapter = clientAdapter
+                }
+            }
+        }
+    }
+    
     override fun onDestroy() {
         super.onDestroy()
+        
+        // 离开 Agora 频道
+        if (isAgoraJoined) {
+            agoraEngine?.leaveChannel()
+            isAgoraJoined = false
+        }
+        agoraEngine?.stopPreview()
+        agoraEngine = null
+        
+        // 释放串口资源
         serialPortManager?.release()
         serialPortManager = null
     }
