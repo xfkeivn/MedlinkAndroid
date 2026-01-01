@@ -3,9 +3,8 @@ package com.bsci.medlink.ui.meeting
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
-import android.view.View
 import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.bsci.medlink.R
 import android.app.AlertDialog
@@ -21,6 +20,14 @@ import com.bsci.medlink.utils.AgoraManager
 import com.bsci.medlink.utils.DeviceUuidFactory
 import com.bsci.medlink.utils.SerialPortManager
 import com.bsci.medlink.utils.HIDCommandBuilder
+import com.jiangdg.ausbc.base.CameraActivity
+import com.jiangdg.ausbc.callback.ICameraStateCallBack
+import com.jiangdg.ausbc.MultiCameraClient
+import com.jiangdg.ausbc.widget.IAspectRatio
+import android.hardware.usb.UsbDevice
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
 import io.agora.rtc2.ChannelMediaOptions
 import io.agora.rtc2.Constants
 import io.agora.rtc2.IRtcEngineEventHandler
@@ -31,8 +38,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
-
-class MeetingPrepareActivity : AppCompatActivity() {
+class MeetingPrepareActivity : CameraActivity() {
     private lateinit var binding: ActivityMeetingPrepareBinding
     private lateinit var preferenceManager: PreferenceManager
     private lateinit var clientAdapter: ClientListAdapter
@@ -40,8 +46,9 @@ class MeetingPrepareActivity : AppCompatActivity() {
     private val registrationService = HostRegistrationService()
     private lateinit var uuidFactory: DeviceUuidFactory
     private var selectedClient: Client? = null
-    private var isUsbCameraOk = false
-    private var isMicrophoneEnabled = false
+    private var isUsbCameraOk = false  // USB摄像头是否已连接
+    private var isUsbCameraEnabled = true  // USB摄像头是否启用（默认启用）
+    private var isMicrophoneEnabled = true  // 默认开启
     private var isRemoteControlEnabled = false
     private var serialPortManager: SerialPortManager? = null
     private var isSerialPortAvailable = false
@@ -51,17 +58,18 @@ class MeetingPrepareActivity : AppCompatActivity() {
     private var isAgoraJoined = false
     private val onlineUserIds = mutableSetOf<String>() // 存储在线用户的ID
     
-    // 获取 AgoraManager 实例
-    private val agoraManager: AgoraManager by lazy {
-        (application as MainApplication).agoraManager
-    }
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+    override fun getRootView(layoutInflater: LayoutInflater): View? {
         binding = ActivityMeetingPrepareBinding.inflate(layoutInflater)
-        setContentView(binding.root)
+        return binding.root
+    }
+    
+    override fun initData() {
+        super.initData()
 
-        preferenceManager = PreferenceManager(this)
+        // preferenceManager 已在 initView 中初始化，这里只需要确保已初始化
+        if (!::preferenceManager.isInitialized) {
+            preferenceManager = PreferenceManager(this)
+        }
         uuidFactory = DeviceUuidFactory(this)
 
         // 初始化 Agora Engine 用于监听频道用户变化
@@ -108,13 +116,45 @@ class MeetingPrepareActivity : AppCompatActivity() {
         }
     }
 
+    override fun initView() {
+        super.initView()
+        // 在 initView 中初始化 preferenceManager，因为 initView 在 initData 之前被调用
+        if (!::preferenceManager.isInitialized) {
+            preferenceManager = PreferenceManager(this)
+        }
+        initializeUI()
+    }
+    
     private fun initializeUI() {
         setupDeviceInfo()
         setupClientList()
         initSerialPort()
         setupDeviceStatus()
         setupExitButton()
+        setupBackPressHandler()
+        
+        // 检查当前已连接的USB摄像头
+        checkUsbCameraStatus()
     }
+    
+    /**
+     * 获取摄像头视图（返回 null，因为不需要预览，只需要检测设备）
+     */
+    override fun getCameraView(): IAspectRatio? {
+        return null  // 返回 null 使用 offscreen render 模式，只检测设备不显示预览
+    }
+    
+    /**
+     * 获取摄像头视图容器（返回 null，因为不需要预览）
+     */
+    override fun getCameraViewContainer(): ViewGroup? {
+        return null
+    }
+    
+    /**
+     * 设置设置按钮
+     */
+
     
     /**
      * 设置退出按钮
@@ -123,6 +163,18 @@ class MeetingPrepareActivity : AppCompatActivity() {
         binding.btnExit.setOnClickListener {
             showExitAppDialog()
         }
+    }
+    
+    /**
+     * 设置返回键处理
+     */
+    private fun setupBackPressHandler() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                // 按返回键时显示退出确认对话框
+                showExitAppDialog()
+            }
+        })
     }
     
     /**
@@ -216,76 +268,87 @@ class MeetingPrepareActivity : AppCompatActivity() {
         binding.rvClients.layoutManager = LinearLayoutManager(this)
         binding.rvClients.adapter = clientAdapter
 
-        // 先从缓存中获取客户端列表（在 SplashActivity 中已预加载）
-        loadClientsFromCache()
-        
-        // 同时从服务器刷新客户端列表（后台更新）
-        loadClientsFromServer()
-
-        // 检查 USB 摄像头状态
-        checkUsbCameraStatus()
+        // 加载客户端列表（先显示缓存，后台刷新）
+        loadClients()
     }
     
-    private fun loadClientsFromCache() {
-        // 从 Application 缓存中获取客户端列表
+    /**
+     * 加载客户端列表
+     * 直接使用 SplashActivity 中已缓存的客户端列表
+     * 如果缓存为空，才尝试从服务器加载（作为兜底）
+     */
+    private fun loadClients() {
         val cachedClients = (application as? MainApplication)?.cachedClients
-        if (cachedClients != null && cachedClients.isNotEmpty()) {
-            // 更新在线状态并排序（在线在前）
-            val sortedClients = updateClientsOnlineStatus(cachedClients)
-            // 使用缓存的数据更新适配器
-            clientAdapter = ClientListAdapter(sortedClients) { client ->
-                selectedClient = client
-                updateCallButtonState()
-            }
-            binding.rvClients.adapter = clientAdapter
+        if (!cachedClients.isNullOrEmpty()) {
+            // 使用缓存数据
+            updateClientAdapter(cachedClients)
+            
+            // 加入 Agora 频道以监听用户在线状态变化
+            joinAgoraChannelForPresence()
+        } else {
+            // 缓存为空时，才尝试从服务器加载（兜底逻辑）
+            Log.w(TAG, "缓存为空，尝试从服务器加载客户端列表")
+            refreshClientsFromServer()
         }
     }
-
-    private fun loadClientsFromServer() {
-        // TODO: 从 PreferenceManager 或配置中获取 IP 和 UUID
-        // 这里需要根据实际情况获取 IP 地址和 UUID
-         val ip = getServerIp() // 需要实现此方法获取 IP
-        val uuid = getUuid() // 需要实现此方法获取 UUID
+    
+    /**
+     * 更新客户端适配器
+     */
+    private fun updateClientAdapter(clients: List<Client>) {
+        val clientsWithStatus = updateClientsOnlineStatus(clients)
+        clientAdapter = ClientListAdapter(clientsWithStatus) { client ->
+            selectedClient = client
+            updateCallButtonState()
+        }
+        binding.rvClients.adapter = clientAdapter
+    }
+    
+    /**
+     * 从服务器刷新客户端列表
+     */
+    private fun refreshClientsFromServer() {
+        val ip = getServerIp()
+        val uuid = getUuid()
 
         if (ip.isEmpty() || uuid.isEmpty()) {
-            Toast.makeText(this, "服务器配置不完整", Toast.LENGTH_SHORT).show()
+            // 如果配置不完整，且缓存为空，使用模拟数据
+            val cachedClients = (application as? MainApplication)?.cachedClients
+            if (cachedClients.isNullOrEmpty()) {
+                loadMockClients()
+            }
             return
         }
-
-        // 显示加载状态（可以添加 ProgressBar 到布局中）
-        // binding.progressBar?.visibility = View.VISIBLE
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val clients = clientService.getClients(ip, uuid)
                 withContext(Dispatchers.Main) {
-                    // binding.progressBar?.visibility = View.GONE
                     if (clients.isNotEmpty()) {
                         // 更新缓存
                         (application as? MainApplication)?.cachedClients = clients
                         
-                        // 更新适配器数据（使用在线状态更新后的客户端列表）
-                        val clientsWithStatus = updateClientsOnlineStatus(clients)
-                        clientAdapter = ClientListAdapter(clientsWithStatus) { client ->
-                            selectedClient = client
-                            updateCallButtonState()
-                        }
-                        binding.rvClients.adapter = clientAdapter
+                        // 更新适配器
+                        updateClientAdapter(clients)
                         
-                        // 加入 Agora 频道以监听用户变化
-                        joinAgoraChannelForPresence()
+                        // 加入 Agora 频道以监听用户变化（如果还未加入）
+                        if (!isAgoraJoined) {
+                            joinAgoraChannelForPresence()
+                        }
                     } else {
                         // 如果服务器返回空列表，但缓存中有数据，保持显示缓存数据
-                        if ((application as? MainApplication)?.cachedClients.isNullOrEmpty()) {
+                        val cachedClients = (application as? MainApplication)?.cachedClients
+                        if (cachedClients.isNullOrEmpty()) {
                             Toast.makeText(this@MeetingPrepareActivity, "未获取到客户端列表", Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
             } catch (e: Exception) {
+                Log.e(TAG, "获取客户端列表失败: ${e.message}", e)
                 withContext(Dispatchers.Main) {
-                    // binding.progressBar?.visibility = View.GONE
                     // 如果获取失败，但缓存中有数据，继续使用缓存数据
-                    if ((application as? MainApplication)?.cachedClients.isNullOrEmpty()) {
+                    val cachedClients = (application as? MainApplication)?.cachedClients
+                    if (cachedClients.isNullOrEmpty()) {
                         Toast.makeText(this@MeetingPrepareActivity, "获取客户端列表失败: ${e.message}", Toast.LENGTH_SHORT).show()
                         // 如果获取失败且缓存为空，使用模拟数据
                         loadMockClients()
@@ -304,12 +367,12 @@ class MeetingPrepareActivity : AppCompatActivity() {
             Client("4", "客户端D", null, null, true),
             Client("5", "客户端E", null, null, false)
         )
-
-        clientAdapter = ClientListAdapter(clients) { client ->
-            selectedClient = client
-            updateCallButtonState()
-        }
-        binding.rvClients.adapter = clientAdapter
+        
+        // 更新缓存
+        (application as? MainApplication)?.cachedClients = clients
+        
+        // 更新适配器
+        updateClientAdapter(clients)
     }
 
     private fun getServerIp(): String {
@@ -323,17 +386,64 @@ class MeetingPrepareActivity : AppCompatActivity() {
         return uuidFactory.getDeviceUuid()
     }
 
+    /**
+     * 检查USB摄像头状态
+     */
     private fun checkUsbCameraStatus() {
-        // TODO: 实际检查 USB 摄像头状态
-        isUsbCameraOk = true // 模拟状态
+        val deviceList = getDeviceList()
+        isUsbCameraOk = !deviceList.isNullOrEmpty()
+        if (isUsbCameraOk && isUsbCameraEnabled) {
+            // 如果有摄像头且已启用，保持启用状态
+        } else if (!isUsbCameraOk) {
+            // 如果没有摄像头，禁用状态
+            isUsbCameraEnabled = false
+        }
         updateUsbCameraIcon()
     }
+    
+    /**
+     * ICameraStateCallBack 实现 - 摄像头状态变化回调
+     */
+    override fun onCameraState(self: MultiCameraClient.ICamera, code: ICameraStateCallBack.State, msg: String?) {
+        when (code) {
+            ICameraStateCallBack.State.OPENED -> {
+                Log.d(TAG, "USB摄像头已打开: $msg")
+                runOnUiThread {
+                    isUsbCameraOk = true
+                    updateUsbCameraIcon()
+                }
+            }
+            ICameraStateCallBack.State.CLOSED -> {
+                Log.d(TAG, "USB摄像头已关闭: $msg")
+                runOnUiThread {
+                    isUsbCameraOk = false
+                    isUsbCameraEnabled = false
+                    updateUsbCameraIcon()
+                }
+            }
+            ICameraStateCallBack.State.ERROR -> {
+                Log.e(TAG, "USB摄像头错误: $msg")
+                runOnUiThread {
+                    isUsbCameraOk = false
+                    updateUsbCameraIcon()
+                }
+            }
+        }
+    }
+    
 
     private fun setupDeviceStatus() {
-        // USB 摄像头状态
+        // USB 摄像头状态（可点击切换启用/禁用）
         binding.ivUsbCamera.setOnClickListener {
-            // USB 摄像头状态不可点击切换，只显示状态
-            Toast.makeText(this, if (isUsbCameraOk) "USB摄像头正常" else "USB摄像头不可用", Toast.LENGTH_SHORT).show()
+            if (!isUsbCameraOk) {
+                // 如果没有USB摄像头，提示用户
+                Toast.makeText(this, "未检测到USB摄像头", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            // 切换启用/禁用状态
+            isUsbCameraEnabled = !isUsbCameraEnabled
+            updateUsbCameraIcon()
+            Toast.makeText(this, if (isUsbCameraEnabled) "USB摄像头已启用" else "USB摄像头已禁用", Toast.LENGTH_SHORT).show()
         }
 
         // 麦克风使能切换
@@ -375,12 +485,18 @@ class MeetingPrepareActivity : AppCompatActivity() {
     }
 
     private fun updateUsbCameraIcon() {
-        if (isUsbCameraOk) {
+        if (!isUsbCameraOk) {
+            // 没有USB摄像头，显示灰色禁用图标
+            binding.ivUsbCamera.setImageResource(R.drawable.ic_camera_off)
+            binding.ivUsbCamera.alpha = 0.5f
+        } else if (isUsbCameraEnabled) {
+            // 有USB摄像头且已启用，显示正常图标
             binding.ivUsbCamera.setImageResource(R.drawable.ic_camera_on)
             binding.ivUsbCamera.alpha = 1.0f
         } else {
-            binding.ivUsbCamera.setImageResource(R.drawable.ic_camera_off)
-            binding.ivUsbCamera.alpha = 0.5f
+            // 有USB摄像头但已禁用，显示带对角线的灰色图标
+            binding.ivUsbCamera.setImageResource(R.drawable.ic_camera_disabled)
+            binding.ivUsbCamera.alpha = 1.0f
         }
     }
 
@@ -396,16 +512,16 @@ class MeetingPrepareActivity : AppCompatActivity() {
 
     private fun updateRemoteControlIcon() {
         if (!isSerialPortAvailable) {
-            // 串口设备不可用，显示灰色禁用鼠标图标
-            binding.ivRemoteControl.setImageResource(R.drawable.ic_mouse_disabled)
-            binding.ivRemoteControl.alpha = 0.3f
+            // 串口设备不可用，显示灰色禁用图标
+            binding.ivRemoteControl.setImageResource(R.drawable.ic_remote_control_off)
+            binding.ivRemoteControl.alpha = 0.5f
         } else if (isRemoteControlEnabled) {
-            // 串口设备可用且已启用，显示正常鼠标图标
-            binding.ivRemoteControl.setImageResource(R.drawable.ic_mouse)
+            // 串口设备可用且已启用，显示开启图标
+            binding.ivRemoteControl.setImageResource(R.drawable.ic_remote_control_on)
             binding.ivRemoteControl.alpha = 1.0f
         } else {
-            // 串口设备可用但未启用，显示禁用鼠标图标（带斜线）
-            binding.ivRemoteControl.setImageResource(R.drawable.ic_mouse_disabled)
+            // 串口设备可用但未启用，显示关闭图标
+            binding.ivRemoteControl.setImageResource(R.drawable.ic_remote_control_off)
             binding.ivRemoteControl.alpha = 1.0f
         }
     }
@@ -533,7 +649,8 @@ class MeetingPrepareActivity : AppCompatActivity() {
      */
     private fun initAgoraEngineForPresence() {
         // 使用 AgoraManager 获取或创建 RtcEngine 实例
-        agoraEngine = agoraManager.getOrCreateEngine(agoraPresenceEventHandler)
+        agoraEngine = AgoraManager.getOrCreateEngine(this)
+        AgoraManager.addEventHandler(agoraPresenceEventHandler)
         if (agoraEngine != null) {
             Log.d(TAG, "Agora Engine initialized for presence monitoring")
         } else {
@@ -545,6 +662,7 @@ class MeetingPrepareActivity : AppCompatActivity() {
      * 启动视频通话（直接启动 VideoCallActivity，由 VideoCallActivity 负责加入频道）
      */
     private fun startVideoCall() {
+        Log.d(TAG,"startVideoCall")
         val client = selectedClient ?: return
         val channelId = preferenceManager.getChannelId() // 使用设备的频道ID
         
@@ -560,6 +678,13 @@ class MeetingPrepareActivity : AppCompatActivity() {
             putExtra("channel_id", channelId) // 使用设备的频道ID
             putExtra("microphone_enabled", isMicrophoneEnabled)
             putExtra("remote_control_enabled", isRemoteControlEnabled)
+        }
+
+        if (isAgoraJoined)
+        {
+            Log.d(TAG,"leaveChannel")
+            agoraEngine?.leaveChannel()
+            isAgoraJoined = false
         }
         startActivity(intent)
     }
@@ -622,30 +747,13 @@ class MeetingPrepareActivity : AppCompatActivity() {
         }
         
         override fun onJoinChannelSuccess(channel: String?, uid: Int, elapsed: Int) {
-            Log.d(TAG, "Joined channel for presence: $channel, uid: $uid")
+            Log.d(TAG, "Joined channel for presence: $channel, uid: $uid,elapsed:$elapsed")
             isAgoraJoined = true
-            // 加入频道成功后，刷新客户端列表状态
-            // 注意：已经在频道中的用户会通过 onUserJoined 回调通知
-            // 但为了确保状态正确，延迟一小段时间后刷新
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                refreshClientsListStatus()
-            }, 500)
         }
         
         override fun onLeaveChannel(stats: io.agora.rtc2.IRtcEngineEventHandler.RtcStats) {
             Log.d(TAG, "Left channel for presence")
             isAgoraJoined = false
-            // 离开频道后，如果 Activity 处于 resume 状态，重新加入频道
-            // 这样可以确保从 VideoCallActivity 返回后能重新监听用户状态
-            val channelId = preferenceManager.getChannelId()
-            if (channelId.isNotEmpty() && agoraEngine != null) {
-                // 延迟一小段时间后重新加入，确保离开操作完成
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    if (!isAgoraJoined) {
-                        joinAgoraChannelForPresence()
-                    }
-                }, 300)
-            }
         }
         
         override fun onUserJoined(uid: Int, elapsed: Int) {
@@ -691,55 +799,36 @@ class MeetingPrepareActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        Log.d(TAG,"on Paused")
         super.onPause()
+        if (isAgoraJoined)
+        {
+            agoraEngine?.leaveChannel()
+            isAgoraJoined = false
+        }
+
     }
     
     override fun onResume() {
         super.onResume()
+        Log.d(TAG,"on Resumed")
         // 当 Activity 恢复时，重新加入监听频道（确保状态是最新的）
         // 因为 VideoCallActivity 退出时会 leaveChannel，所以需要重新加入
         val channelId = preferenceManager.getChannelId()
         if (channelId.isNotEmpty() && agoraEngine != null) {
             // 如果已经在频道中，先离开再重新加入（确保状态刷新）
             if (isAgoraJoined) {
-                agoraEngine?.leaveChannel()
-                // 注意：isAgoraJoined 会在 onLeaveChannel 回调中设置为 false
-                // 清空在线用户列表，等待重新加入后更新
-                onlineUserIds.clear()
-                // 在 onLeaveChannel 回调中会重新加入频道
+
             } else {
                 // 如果不在频道中，直接加入
                 joinAgoraChannelForPresence()
             }
         }
     }
-    
-    /**
-     * 刷新客户端列表状态（重新从缓存获取并更新在线状态）
-     */
-    private fun refreshClientsListStatus() {
-        val cachedClients = (application as? MainApplication)?.cachedClients
-        if (cachedClients != null) {
-            val updatedClients = updateClientsOnlineStatus(cachedClients)
-            // 更新缓存
-            (application as? MainApplication)?.cachedClients = updatedClients
-            
-            // 更新适配器
-            runOnUiThread {
-                if (::clientAdapter.isInitialized) {
-                    clientAdapter = ClientListAdapter(updatedClients) { client ->
-                        selectedClient = client
-                        updateCallButtonState()
-                    }
-                    binding.rvClients.adapter = clientAdapter
-                }
-            }
-        }
-    }
-    
+
     override fun onDestroy() {
         super.onDestroy()
-        
+        Log.d(TAG,"on Destroyed")
         // 离开 Agora 频道
         if (isAgoraJoined) {
             agoraEngine?.leaveChannel()
@@ -753,6 +842,8 @@ class MeetingPrepareActivity : AppCompatActivity() {
         // 释放串口资源
         serialPortManager?.release()
         serialPortManager = null
+        
+        // CameraActivity 的 clear() 方法会自动处理摄像头注销
     }
 }
 

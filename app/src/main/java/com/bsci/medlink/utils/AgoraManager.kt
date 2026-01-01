@@ -12,43 +12,31 @@ import io.agora.rtc2.Constants
 /**
  * Agora RTC Engine 管理器
  * 统一管理 RtcEngine 实例，避免在多个 Activity 中重复初始化
+ * 
+ * 使用 Kotlin object 实现单例模式，更简洁且线程安全
  */
-class AgoraManager private constructor(context: Context) {
+object AgoraManager {
+    private const val TAG = "AgoraManager"
     private var engine: RtcEngine? = null
-    private var currentEventHandler: IRtcEngineEventHandler? = null
-    private val context: Context = context.applicationContext
     
-    companion object {
-        private const val TAG = "AgoraManager"
-        @Volatile
-        private var INSTANCE: AgoraManager? = null
-        
-        /**
-         * 获取 AgoraManager 单例实例
-         */
-        fun getInstance(context: Context): AgoraManager {
-            return INSTANCE ?: synchronized(this) {
-                INSTANCE ?: AgoraManager(context).also { INSTANCE = it }
-            }
-        }
-    }
     
     /**
      * 初始化或获取 RtcEngine 实例
-     * @param eventHandler 事件处理器，如果为 null 则使用默认处理器
+     * @param context Context 实例，建议传入 Activity 或 Application 的 context
      * @return RtcEngine 实例，如果初始化失败返回 null
      */
-    fun getOrCreateEngine(eventHandler: IRtcEngineEventHandler? = null): RtcEngine? {
+    fun getOrCreateEngine(context: Context): RtcEngine? {
         if (engine == null) {
+            val appContext = context.applicationContext
+            
             try {
                 val config = RtcEngineConfig()
-                config.mContext = context
-                config.mAppId = context.getString(R.string.agora_app_id)
+                config.mContext = appContext
+                config.mAppId = appContext.getString(R.string.agora_app_id)
                 config.mChannelProfile = Constants.CHANNEL_PROFILE_LIVE_BROADCASTING
-                config.mEventHandler = eventHandler ?: defaultEventHandler
                 config.mAudioScenario = Constants.AudioScenario.getValue(Constants.AudioScenario.DEFAULT)
                 
-                (context.applicationContext as? MainApplication)?.globalSettings?.areaCode?.let {
+                (appContext as? MainApplication)?.globalSettings?.areaCode?.let {
                     config.mAreaCode = it
                 }
                 
@@ -66,21 +54,16 @@ class AgoraManager private constructor(context: Context) {
                 )
                 
                 val localAccessPointConfiguration =
-                    (context.applicationContext as? MainApplication)?.globalSettings?.privateCloudConfig
+                    (appContext as? MainApplication)?.globalSettings?.privateCloudConfig
                 if (localAccessPointConfiguration != null) {
                     engine?.setLocalAccessPoint(localAccessPointConfiguration)
                 }
-                
-                currentEventHandler = eventHandler
+
+
                 Log.d(TAG, "RtcEngine created successfully")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to create RtcEngine", e)
                 return null
-            }
-        } else {
-            // 如果已存在实例，更新事件处理器
-            if (eventHandler != null && eventHandler != currentEventHandler) {
-                updateEventHandler(eventHandler)
             }
         }
         
@@ -92,8 +75,15 @@ class AgoraManager private constructor(context: Context) {
      * 注意：Agora SDK 不支持动态更换 EventHandler，需要重新创建实例
      * 这里只是记录当前使用的处理器
      */
-    private fun updateEventHandler(eventHandler: IRtcEngineEventHandler) {
-        currentEventHandler = eventHandler
+    fun addEventHandler(eventHandler: IRtcEngineEventHandler) {
+        //multiRectEventHandler?.addListener(eventHandler)
+        engine?.addHandler(eventHandler)
+        Log.w(TAG, "EventHandler updated, but RtcEngine doesn't support dynamic handler change")
+    }
+
+    fun removeEventHandler(eventHandler: IRtcEngineEventHandler) {
+        //multiRectEventHandler?.removeListener(eventHandler)
+        engine?.removeHandler(eventHandler)
         Log.w(TAG, "EventHandler updated, but RtcEngine doesn't support dynamic handler change")
     }
     
@@ -110,7 +100,6 @@ class AgoraManager private constructor(context: Context) {
         engine?.leaveChannel()
         engine?.stopPreview()
         engine = null
-        currentEventHandler = null
         Log.d(TAG, "RtcEngine released")
     }
     
@@ -128,12 +117,10 @@ class AgoraManager private constructor(context: Context) {
     }
     
     /**
-     * 默认事件处理器（用于初始化时）
+     * 应用音频设备设置
+     * @param context Context 实例
      */
-    private val defaultEventHandler = object : IRtcEngineEventHandler() {
-        override fun onError(err: Int) {
-            Log.w(TAG, "Default handler: onError code $err")
-        }
-    }
+
 }
+
 

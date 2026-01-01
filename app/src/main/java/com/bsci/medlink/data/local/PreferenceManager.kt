@@ -25,6 +25,8 @@ class PreferenceManager(context: Context) {
         private const val KEY_EQUIPMENT = "equipment"
         private const val KEY_REGISTER_DATE = "register_date"
         private const val KEY_CHANNEL_ID = "channel_id"
+        private const val KEY_AUDIO_INPUT_DEVICE_ID = "audio_input_device_id"
+        private const val KEY_AUDIO_OUTPUT_DEVICE_ID = "audio_output_device_id"
     }
 
     fun saveLoginInfo(username: String, password: String, rememberMe: Boolean) {
@@ -162,6 +164,28 @@ class PreferenceManager(context: Context) {
     
     fun getChannelId(): String {
         return prefs.getString(KEY_CHANNEL_ID, "") ?: ""
+    }
+    
+    fun saveAudioInputDeviceId(deviceId: String?) {
+        prefs.edit().apply {
+            deviceId?.let { putString(KEY_AUDIO_INPUT_DEVICE_ID, it) } ?: remove(KEY_AUDIO_INPUT_DEVICE_ID)
+            apply()
+        }
+    }
+    
+    fun getAudioInputDeviceId(): String {
+        return prefs.getString(KEY_AUDIO_INPUT_DEVICE_ID, "") ?: ""
+    }
+    
+    fun saveAudioOutputDeviceId(deviceId: String?) {
+        prefs.edit().apply {
+            deviceId?.let { putString(KEY_AUDIO_OUTPUT_DEVICE_ID, it) } ?: remove(KEY_AUDIO_OUTPUT_DEVICE_ID)
+            apply()
+        }
+    }
+    
+    fun getAudioOutputDeviceId(): String {
+        return prefs.getString(KEY_AUDIO_OUTPUT_DEVICE_ID, "") ?: ""
     }
 }
 

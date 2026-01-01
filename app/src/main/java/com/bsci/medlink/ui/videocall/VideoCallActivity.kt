@@ -54,11 +54,9 @@ class VideoCallActivity : CameraActivity() {
     private var joined = false
     private var channelId: String = ""
     private var remoteUid: Int = 0 // 远程用户ID
+    private var clientId: String = "" // 客户端ID
+    private var clientName: String = "" // 客户端名称
     
-    // 获取 AgoraManager 实例
-    private val agoraManager: AgoraManager by lazy {
-        (application as MainApplication).agoraManager
-    }
     
     // USB 串口管理器
     private var serialPortManager: SerialPortManager? = null
@@ -85,8 +83,13 @@ class VideoCallActivity : CameraActivity() {
         super.onCreate(savedInstanceState)
         
         channelId = intent.getStringExtra("channel_id") ?: "default_channel"
+        clientId = intent.getStringExtra("client_id") ?: ""
+        clientName = intent.getStringExtra("client_name") ?: ""
         isMicrophoneMuted = !intent.getBooleanExtra("microphone_enabled", true)
         isRemoteControlEnabled = intent.getBooleanExtra("remote_control_enabled", false)
+        
+        // 初始化显示参会者ID
+        updateRemoteUserDisplay()
 
         callStartTime = System.currentTimeMillis()
         startTimer()
@@ -173,7 +176,7 @@ class VideoCallActivity : CameraActivity() {
         }
 
         // 远程控制使能切换
-        binding.btnRemoteControl.setOnClickListener {
+        binding.btnRemotecontrol.setOnClickListener {
             isRemoteControlEnabled = !isRemoteControlEnabled
             if (isRemoteControlEnabled) {
                 // 启用远程控制，尝试连接串口设备
@@ -192,9 +195,12 @@ class VideoCallActivity : CameraActivity() {
 
     private fun initAgoraEngine() {
         // 使用 AgoraManager 获取或创建 RtcEngine 实例
-        engine = agoraManager.getOrCreateEngine(iRtcEngineEventHandler)
+        engine = AgoraManager.getOrCreateEngine(this)
+        AgoraManager.addEventHandler(iRtcEngineEventHandler)
         if (engine == null) {
             showAlert("初始化 Agora 引擎失败")
+        } else {
+
         }
     }
 
@@ -253,7 +259,7 @@ class VideoCallActivity : CameraActivity() {
         option.publishCustomVideoTrack = true
         option.publishMicrophoneTrack = !isMicrophoneMuted
         option.clientRoleType = Constants.CLIENT_ROLE_BROADCASTER
-        
+        Log.d(TAG,"joinChannel")
         val res = engine?.joinChannel(null, channelId, 0, option) ?: -1
         if (res != 0) {
             handler.post {
@@ -310,14 +316,11 @@ class VideoCallActivity : CameraActivity() {
      * 退出会议（离开频道并返回）
      */
     private fun exitCall() {
+        Log.d(TAG,"exitCall")
         // 移除预览数据回调
         removePreviewDataCallBack(previewDataCallback)
-        joined = false
-        
         // 离开频道
-        engine?.leaveChannel()
-        engine?.stopPreview()
-        
+        leaveChannel()
         // 返回 MeetingPrepareActivity
         finish()
     }
@@ -367,9 +370,9 @@ class VideoCallActivity : CameraActivity() {
                     binding.root.findViewById<View>(R.id.placeholder_text)?.visibility = View.GONE
                 }
                 // Add preview data callback when camera is opened
-                if (joined) {
-                    addPreviewDataCallBack(previewDataCallback)
-                }
+
+                addPreviewDataCallBack(previewDataCallback)
+
             }
             ICameraStateCallBack.State.CLOSED -> {
                 Log.d(TAG, "Camera closed: ${self.getUsbDevice().deviceName}")
@@ -398,11 +401,11 @@ class VideoCallActivity : CameraActivity() {
 
     private fun updateRemoteControlButton() {
         if (isRemoteControlEnabled) {
-            binding.btnRemoteControl.setImageResource(R.drawable.ic_remote_control_on)
-            binding.btnRemoteControl.alpha = 1.0f
+            binding.btnRemotecontrol.setImageResource(R.drawable.ic_remote_control_on)
+            binding.btnRemotecontrol.alpha = 1.0f
         } else {
-            binding.btnRemoteControl.setImageResource(R.drawable.ic_remote_control_off)
-            binding.btnRemoteControl.alpha = 0.7f
+            binding.btnRemotecontrol.setImageResource(R.drawable.ic_remote_control_off)
+            binding.btnRemotecontrol.alpha = 0.7f
         }
     }
 
@@ -440,6 +443,7 @@ class VideoCallActivity : CameraActivity() {
         override fun onLeaveChannel(stats: RtcStats) {
             super.onLeaveChannel(stats)
             Log.i(TAG, String.format("local user %d leaveChannel!", myUid))
+            joined = false
             handler.post {
                 showToast("离开频道")
                 // 清理远程视频视图
@@ -450,6 +454,7 @@ class VideoCallActivity : CameraActivity() {
         override fun onJoinChannelSuccess(channel: String?, uid: Int, elapsed: Int) {
             Log.i(TAG, String.format("onJoinChannelSuccess channel %s uid %d", channel, uid))
             myUid = uid
+            joined = true
             // joined 状态已在 configureVideoCall 中设置
             handler.post {
                 showToast("加入频道成功")
@@ -461,6 +466,7 @@ class VideoCallActivity : CameraActivity() {
             remoteUid = uid
             handler.post {
                 setupRemoteVideo(uid)
+                updateRemoteUserDisplay()
             }
         }
 
@@ -470,6 +476,7 @@ class VideoCallActivity : CameraActivity() {
                 handler.post {
                     clearRemoteVideoView()
                     remoteUid = 0
+                    updateRemoteUserDisplay()
                 }
             }
         }
@@ -508,6 +515,18 @@ class VideoCallActivity : CameraActivity() {
             remoteUid = 0
         } catch (e: Exception) {
             Log.e(TAG, "Error clearing remote video", e)
+        }
+    }
+    
+    /**
+     * 更新参会者ID显示
+     */
+    private fun updateRemoteUserDisplay() {
+        if (remoteUid != 0 && clientName.isNotEmpty()) {
+            // 显示客户端名称
+            binding.tvRemoteUser.text = clientName
+        } else {
+            binding.tvRemoteUser.text = ""
         }
     }
 
@@ -614,13 +633,14 @@ class VideoCallActivity : CameraActivity() {
     }
 
     override fun onDestroy() {
-        leaveChannel()
+        Log.d(TAG,"Destroyed")
+        //leaveChannel()
         clearRemoteVideoView()
         disconnectSerialPort()
         serialPortManager?.release()
         serialPortManager = null
-        engine?.leaveChannel()
-        engine?.stopPreview()
+        //engine?.leaveChannel()
+        //engine?.stopPreview()
         // 注意：不在这里释放 engine，因为可能被 MeetingPrepareActivity 使用
         // 只在应用退出时由 MainApplication 统一释放
         engine = null

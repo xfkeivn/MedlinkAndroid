@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.bsci.medlink.R
@@ -22,6 +23,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class SplashActivity : AppCompatActivity() {
+    private val TAG:String = "SplashActivity"
     private val splashDelay: Long = 1000 // 1秒延迟
     private lateinit var preferenceManager: PreferenceManager
     private lateinit var uuidFactory: DeviceUuidFactory
@@ -39,6 +41,11 @@ class SplashActivity : AppCompatActivity() {
         Handler(Looper.getMainLooper()).postDelayed({
             checkNetworkAndRegistration()
         }, splashDelay)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.d(TAG,"Destroyed")
     }
     
     private fun checkNetworkAndRegistration() {
@@ -88,6 +95,9 @@ class SplashActivity : AppCompatActivity() {
     }
     
     private fun requestMeetingAccount(serverIp: String, deviceUuid: String) {
+        // 显示加载状态
+        showLoadingState()
+        
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 // 并行请求 MeetingAccount 和客户端列表
@@ -124,13 +134,20 @@ class SplashActivity : AppCompatActivity() {
                     // 缓存客户端列表到 Application
                     (application as? MainApplication)?.cachedClients = clients
                     
+                    // 隐藏加载状态
+                    hideLoadingState()
+                    
                     // 跳转到会议准备界面
                     val intent = Intent(this@SplashActivity, MeetingPrepareActivity::class.java)
                     startActivity(intent)
                     finish()
                 }
             } catch (e: Exception) {
+                Log.e(TAG, "请求失败: ${e.message}", e)
                 withContext(Dispatchers.Main) {
+                    // 隐藏加载状态
+                    hideLoadingState()
+                    
                     // 即使请求失败，也跳转到会议准备界面（使用已保存的信息）
                     val intent = Intent(this@SplashActivity, MeetingPrepareActivity::class.java)
                     startActivity(intent)
@@ -138,6 +155,16 @@ class SplashActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+    
+    private fun showLoadingState() {
+        findViewById<android.widget.ProgressBar>(R.id.progress_bar)?.visibility = android.view.View.VISIBLE
+        findViewById<android.widget.TextView>(R.id.tv_loading)?.visibility = android.view.View.VISIBLE
+    }
+    
+    private fun hideLoadingState() {
+        findViewById<android.widget.ProgressBar>(R.id.progress_bar)?.visibility = android.view.View.GONE
+        findViewById<android.widget.TextView>(R.id.tv_loading)?.visibility = android.view.View.GONE
     }
 }
 

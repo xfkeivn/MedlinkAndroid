@@ -7,7 +7,7 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-    
+
     <uses-feature android:name="android.hardware.usb.host" />
 
     <application
@@ -21,44 +21,40 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Medlink"
         android:usesCleartextTraffic="true">
-        
-        <!-- 启动画面 -->
+        <activity
+            android:name=".ui.SettingActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.setting.SettingActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Medlink" /> <!-- 启动画面 -->
         <activity
             android:name=".ui.splash.SplashActivity"
             android:exported="true"
             android:theme="@style/Theme.Medlink">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
+
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
-
-        <!-- 登录界面 -->
+        </activity> <!-- 登录界面 -->
         <activity
             android:name=".ui.login.LoginActivity"
             android:exported="false"
-            android:theme="@style/Theme.Medlink" />
-
-        <!-- HOST 注册界面 -->
+            android:theme="@style/Theme.Medlink" /> <!-- HOST 注册界面 -->
         <activity
             android:name=".ui.registration.HostRegistrationActivity"
             android:exported="false"
-            android:theme="@style/Theme.Medlink" />
-
-        <!-- 会议准备界面 -->
+            android:theme="@style/Theme.Medlink" /> <!-- 会议准备界面 -->
         <activity
             android:name=".ui.meeting.MeetingPrepareActivity"
             android:exported="false"
-            android:theme="@style/Theme.Medlink" />
-
-        <!-- 视频通话界面 -->
+            android:theme="@style/Theme.Medlink" /> <!-- 视频通话界面 -->
         <activity
             android:name=".ui.videocall.VideoCallActivity"
             android:exported="false"
             android:screenOrientation="landscape"
-            android:theme="@style/Theme.Medlink" />
-
-        <!-- 原有的 MainActivity -->
+            android:theme="@style/Theme.Medlink" /> <!-- 原有的 MainActivity -->
         <activity
             android:name=".MainActivity"
             android:exported="false"
