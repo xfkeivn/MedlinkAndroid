@@ -20,14 +20,11 @@ import com.bsci.medlink.utils.AgoraManager
 import com.bsci.medlink.utils.DeviceUuidFactory
 import com.bsci.medlink.utils.SerialPortManager
 import com.bsci.medlink.utils.HIDCommandBuilder
-import com.jiangdg.ausbc.base.CameraActivity
-import com.jiangdg.ausbc.callback.ICameraStateCallBack
+import androidx.appcompat.app.AppCompatActivity
 import com.jiangdg.ausbc.MultiCameraClient
-import com.jiangdg.ausbc.widget.IAspectRatio
+import com.jiangdg.ausbc.callback.IDeviceConnectCallBack
 import android.hardware.usb.UsbDevice
-import android.view.LayoutInflater
-import android.view.View
-import android.view.ViewGroup
+import com.jiangdg.usb.USBMonitor
 import io.agora.rtc2.ChannelMediaOptions
 import io.agora.rtc2.Constants
 import io.agora.rtc2.IRtcEngineEventHandler
@@ -38,7 +35,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
-class MeetingPrepareActivity : CameraActivity() {
+class MeetingPrepareActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMeetingPrepareBinding
     private lateinit var preferenceManager: PreferenceManager
     private lateinit var clientAdapter: ClientListAdapter
@@ -53,25 +50,26 @@ class MeetingPrepareActivity : CameraActivity() {
     private var serialPortManager: SerialPortManager? = null
     private var isSerialPortAvailable = false
     
+    // USB 摄像头监控
+    private var multiCameraClient: MultiCameraClient? = null
+    
     // Agora RTC Engine（仅用于监听频道用户变化）
     private var agoraEngine: RtcEngine? = null
     private var isAgoraJoined = false
     private val onlineUserIds = mutableSetOf<String>() // 存储在线用户的ID
     
-    override fun getRootView(layoutInflater: LayoutInflater): View? {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
         binding = ActivityMeetingPrepareBinding.inflate(layoutInflater)
-        return binding.root
-    }
-    
-    override fun initData() {
-        super.initData()
-
-        // preferenceManager 已在 initView 中初始化，这里只需要确保已初始化
-        if (!::preferenceManager.isInitialized) {
-            preferenceManager = PreferenceManager(this)
-        }
+        setContentView(binding.root)
+        
+        // 初始化 preferenceManager 和 uuidFactory
+        preferenceManager = PreferenceManager(this)
         uuidFactory = DeviceUuidFactory(this)
-
+        
+        // 初始化 USB 摄像头监控
+        initUsbCameraMonitoring()
+        
         // 初始化 Agora Engine 用于监听频道用户变化
         initAgoraEngineForPresence()
         
@@ -116,13 +114,64 @@ class MeetingPrepareActivity : CameraActivity() {
         }
     }
 
-    override fun initView() {
-        super.initView()
-        // 在 initView 中初始化 preferenceManager，因为 initView 在 initData 之前被调用
-        if (!::preferenceManager.isInitialized) {
-            preferenceManager = PreferenceManager(this)
-        }
-        initializeUI()
+    /**
+     * 初始化 USB 摄像头监控
+     * 使用 MultiCameraClient 来监听 USB 摄像头设备的连接和断开
+     */
+    private fun initUsbCameraMonitoring() {
+        multiCameraClient = MultiCameraClient(this, object : IDeviceConnectCallBack {
+            override fun onAttachDev(device: UsbDevice?) {
+                device ?: return
+                Log.d(TAG, "USB摄像头设备已连接: ${device.deviceName}")
+                runOnUiThread {
+                    isUsbCameraOk = true
+                    updateUsbCameraIcon()
+                }
+            }
+
+            override fun onDetachDec(device: UsbDevice?) {
+                device ?: return
+                Log.d(TAG, "USB摄像头设备已断开: ${device.deviceName}")
+                runOnUiThread {
+                    isUsbCameraOk = false
+                    isUsbCameraEnabled = false
+                    updateUsbCameraIcon()
+                }
+            }
+
+            override fun onConnectDev(device: UsbDevice?, ctrlBlock: USBMonitor.UsbControlBlock?) {
+                // MeetingPrepareActivity 不需要实际打开摄像头，只检测设备连接状态
+                device ?: return
+                Log.d(TAG, "USB摄像头设备已授权: ${device.deviceName}")
+                runOnUiThread {
+                    isUsbCameraOk = true
+                    updateUsbCameraIcon()
+                }
+            }
+
+            override fun onDisConnectDec(device: UsbDevice?, ctrlBlock: USBMonitor.UsbControlBlock?) {
+                device ?: return
+                Log.d(TAG, "USB摄像头设备已断开连接: ${device.deviceName}")
+                runOnUiThread {
+                    isUsbCameraOk = false
+                    isUsbCameraEnabled = false
+                    updateUsbCameraIcon()
+                }
+            }
+
+            override fun onCancelDev(device: UsbDevice?) {
+                device ?: return
+                Log.d(TAG, "USB摄像头设备权限被取消: ${device.deviceName}")
+                runOnUiThread {
+                    isUsbCameraOk = false
+                    updateUsbCameraIcon()
+                }
+            }
+        })
+        multiCameraClient?.register()
+        
+        // 检查当前已连接的USB摄像头
+        checkUsbCameraStatus()
     }
     
     private fun initializeUI() {
@@ -132,23 +181,6 @@ class MeetingPrepareActivity : CameraActivity() {
         setupDeviceStatus()
         setupExitButton()
         setupBackPressHandler()
-        
-        // 检查当前已连接的USB摄像头
-        checkUsbCameraStatus()
-    }
-    
-    /**
-     * 获取摄像头视图（返回 null，因为不需要预览，只需要检测设备）
-     */
-    override fun getCameraView(): IAspectRatio? {
-        return null  // 返回 null 使用 offscreen render 模式，只检测设备不显示预览
-    }
-    
-    /**
-     * 获取摄像头视图容器（返回 null，因为不需要预览）
-     */
-    override fun getCameraViewContainer(): ViewGroup? {
-        return null
     }
     
     /**
@@ -390,7 +422,7 @@ class MeetingPrepareActivity : CameraActivity() {
      * 检查USB摄像头状态
      */
     private fun checkUsbCameraStatus() {
-        val deviceList = getDeviceList()
+        val deviceList = multiCameraClient?.getDeviceList()
         isUsbCameraOk = !deviceList.isNullOrEmpty()
         if (isUsbCameraOk && isUsbCameraEnabled) {
             // 如果有摄像头且已启用，保持启用状态
@@ -400,37 +432,6 @@ class MeetingPrepareActivity : CameraActivity() {
         }
         updateUsbCameraIcon()
     }
-    
-    /**
-     * ICameraStateCallBack 实现 - 摄像头状态变化回调
-     */
-    override fun onCameraState(self: MultiCameraClient.ICamera, code: ICameraStateCallBack.State, msg: String?) {
-        when (code) {
-            ICameraStateCallBack.State.OPENED -> {
-                Log.d(TAG, "USB摄像头已打开: $msg")
-                runOnUiThread {
-                    isUsbCameraOk = true
-                    updateUsbCameraIcon()
-                }
-            }
-            ICameraStateCallBack.State.CLOSED -> {
-                Log.d(TAG, "USB摄像头已关闭: $msg")
-                runOnUiThread {
-                    isUsbCameraOk = false
-                    isUsbCameraEnabled = false
-                    updateUsbCameraIcon()
-                }
-            }
-            ICameraStateCallBack.State.ERROR -> {
-                Log.e(TAG, "USB摄像头错误: $msg")
-                runOnUiThread {
-                    isUsbCameraOk = false
-                    updateUsbCameraIcon()
-                }
-            }
-        }
-    }
-    
 
     private fun setupDeviceStatus() {
         // USB 摄像头状态（可点击切换启用/禁用）
@@ -806,7 +807,6 @@ class MeetingPrepareActivity : CameraActivity() {
             agoraEngine?.leaveChannel()
             isAgoraJoined = false
         }
-
     }
     
     override fun onResume() {
@@ -843,7 +843,10 @@ class MeetingPrepareActivity : CameraActivity() {
         serialPortManager?.release()
         serialPortManager = null
         
-        // CameraActivity 的 clear() 方法会自动处理摄像头注销
+        // 注销 USB 摄像头监控
+        multiCameraClient?.unRegister()
+        multiCameraClient?.destroy()
+        multiCameraClient = null
     }
 }
 
