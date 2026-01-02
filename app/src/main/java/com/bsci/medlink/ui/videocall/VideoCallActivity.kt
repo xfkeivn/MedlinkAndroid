@@ -20,6 +20,7 @@ import com.bsci.medlink.databinding.ActivityVideoCallBinding
 import com.bsci.medlink.utils.AgoraManager
 import com.bsci.medlink.utils.CommonUtil
 import com.bsci.medlink.utils.PermissonUtils
+import com.bsci.medlink.utils.RTMManager
 import com.bsci.medlink.utils.SerialPortManager
 import com.jiangdg.ausbc.MultiCameraClient
 import com.jiangdg.ausbc.base.CameraActivity
@@ -45,6 +46,7 @@ class VideoCallActivity : CameraActivity() {
     private lateinit var binding: ActivityVideoCallBinding
     private var isMicrophoneMuted = false
     private var isRemoteControlEnabled = false
+    private var isVideoEnabled = true  // 视频推送是否启用（默认启用）
     private var callStartTime: Long = 0
     private val handler = Handler(Looper.getMainLooper())
     private val TAG = "VideoCallActivity"
@@ -97,6 +99,7 @@ class VideoCallActivity : CameraActivity() {
         setupControls()
         initAgoraEngine()
         initSerialPort()
+        initRTM()
         checkAndRequestPermissions()
     }
 
@@ -170,6 +173,15 @@ class VideoCallActivity : CameraActivity() {
             Toast.makeText(this, if (isMicrophoneMuted) "麦克风已静音" else "麦克风已开启", Toast.LENGTH_SHORT).show()
         }
 
+        // 视频推送切换（仅在 USB 摄像头可用时）
+        binding.btnShareScreen.setOnClickListener {
+            if (isCameraOpened()) {
+                toggleVideoPush()
+            } else {
+                Toast.makeText(this, "USB 摄像头未连接，无法切换视频", Toast.LENGTH_SHORT).show()
+            }
+        }
+
         // 结束会议
         binding.btnEndCall.setOnClickListener {
             showExitCallDialog()
@@ -190,6 +202,7 @@ class VideoCallActivity : CameraActivity() {
         }
 
         updateMicrophoneButton()
+        updateVideoButton()
         updateRemoteControlButton()
     }
 
@@ -368,22 +381,30 @@ class VideoCallActivity : CameraActivity() {
                 handler.post {
                     // 隐藏占位文本
                     binding.root.findViewById<View>(R.id.placeholder_text)?.visibility = View.GONE
+                    // 更新视频按钮状态（摄像头可用）
+                    updateVideoButton()
                 }
-                // Add preview data callback when camera is opened
-
-                addPreviewDataCallBack(previewDataCallback)
-
+                // 如果视频推送已启用，添加预览数据回调
+                if (isVideoEnabled && joined) {
+                    addPreviewDataCallBack(previewDataCallback)
+                }
             }
             ICameraStateCallBack.State.CLOSED -> {
                 Log.d(TAG, "Camera closed: ${self.getUsbDevice().deviceName}")
                 // Remove preview data callback when camera is closed
                 removePreviewDataCallBack(previewDataCallback)
+                handler.post {
+                    // 更新视频按钮状态（摄像头不可用）
+                    updateVideoButton()
+                }
             }
             ICameraStateCallBack.State.ERROR -> {
                 val errorMsg = msg ?: "Unknown error"
                 Log.e(TAG, "Camera error: ${self.getUsbDevice().deviceName}, $errorMsg")
                 handler.post {
                     showToast("摄像头错误: $errorMsg")
+                    // 更新视频按钮状态
+                    updateVideoButton()
                 }
             }
         }
@@ -407,6 +428,59 @@ class VideoCallActivity : CameraActivity() {
             binding.btnRemotecontrol.setImageResource(R.drawable.ic_remote_control_off)
             binding.btnRemotecontrol.alpha = 0.7f
         }
+    }
+    
+    /**
+     * 更新视频按钮状态
+     */
+    private fun updateVideoButton() {
+        val isCameraAvailable = isCameraOpened()
+        if (isVideoEnabled && isCameraAvailable) {
+            // 视频已启用且摄像头可用
+            binding.btnShareScreen.setImageResource(R.drawable.ic_camera_on)
+            binding.btnShareScreen.alpha = 1.0f
+            binding.btnShareScreen.isEnabled = true
+        } else if (!isCameraAvailable) {
+            // 摄像头不可用
+            binding.btnShareScreen.setImageResource(R.drawable.ic_camera_disabled)
+            binding.btnShareScreen.alpha = 0.5f
+            binding.btnShareScreen.isEnabled = false
+        } else {
+            // 视频已禁用但摄像头可用
+            binding.btnShareScreen.setImageResource(R.drawable.ic_camera_off)
+            binding.btnShareScreen.alpha = 0.7f
+            binding.btnShareScreen.isEnabled = true
+        }
+    }
+    
+    /**
+     * 切换视频推送状态
+     */
+    private fun toggleVideoPush() {
+        if (!isCameraOpened()) {
+            Toast.makeText(this, "USB 摄像头未连接", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        isVideoEnabled = !isVideoEnabled
+        
+        if (isVideoEnabled) {
+            // 启用视频推送
+            engine?.muteLocalVideoStream(false)
+            // 重新添加预览数据回调以恢复推送
+            if (joined) {
+                addPreviewDataCallBack(previewDataCallback)
+            }
+            Toast.makeText(this, "视频已开启", Toast.LENGTH_SHORT).show()
+        } else {
+            // 禁用视频推送
+            engine?.muteLocalVideoStream(true)
+            // 移除预览数据回调以停止推送
+            //removePreviewDataCallBack(previewDataCallback)
+            Toast.makeText(this, "视频已关闭", Toast.LENGTH_SHORT).show()
+        }
+        
+        updateVideoButton()
     }
 
     private fun startTimer() {
@@ -455,9 +529,12 @@ class VideoCallActivity : CameraActivity() {
             Log.i(TAG, String.format("onJoinChannelSuccess channel %s uid %d", channel, uid))
             myUid = uid
             joined = true
-            // joined 状态已在 configureVideoCall 中设置
             handler.post {
                 showToast("加入频道成功")
+                // 如果摄像头已打开且视频推送已启用，添加预览数据回调
+                if (isCameraOpened() && isVideoEnabled) {
+                    addPreviewDataCallBack(previewDataCallback)
+                }
             }
         }
 
@@ -533,6 +610,19 @@ class VideoCallActivity : CameraActivity() {
     /**
      * 初始化串口管理器
      */
+    /**
+     * 初始化 RTM 客户端并加入通道
+     */
+    private fun initRTM() {
+        RTMManager.autoInitializeAndJoin(this) { success, error ->
+            if (success) {
+                Log.d(TAG, "RTM initialized and joined channel: $channelId")
+            } else {
+                Log.e(TAG, "Failed to initialize RTM: $error")
+            }
+        }
+    }
+    
     private fun initSerialPort() {
         serialPortManager = SerialPortManager(this).apply {
             setOnConnectionStateListener { connected ->
@@ -639,6 +729,10 @@ class VideoCallActivity : CameraActivity() {
         disconnectSerialPort()
         serialPortManager?.release()
         serialPortManager = null
+        
+        // 释放 RTM 资源（离开通道，但不释放客户端，因为可能被其他地方使用）
+        RTMManager.logout()
+        
         //engine?.leaveChannel()
         //engine?.stopPreview()
         // 注意：不在这里释放 engine，因为可能被 MeetingPrepareActivity 使用

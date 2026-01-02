@@ -4,6 +4,7 @@ import android.app.Application
 import com.bsci.medlink.common.model.GlobalSettings
 import com.bsci.medlink.data.model.Client
 import com.bsci.medlink.utils.AgoraManager
+import com.bsci.medlink.utils.RTMManager
 
 class MainApplication: Application() {
     var globalSettings: GlobalSettings = GlobalSettings()
@@ -17,7 +18,8 @@ class MainApplication: Application() {
     
     override fun onTerminate() {
         super.onTerminate()
-        // 应用退出时销毁 Agora Engine
+        // 应用退出时销毁 Agora Engine 和 RTM 客户端
         AgoraManager.destroyEngine()
+        RTMManager.release()
     }
 }
